@@ -1,0 +1,3 @@
+# Normalize every text file to LF, including on Windows checkouts:
+# Makefile, shell fragments and Dockerfile break under CRLF.
+* text=auto eol=lf

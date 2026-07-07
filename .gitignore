@@ -1,0 +1,22 @@
+# Binaries and local data
+/bin/
+/data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secrets
+.env
+secrets/
+
+# Local tooling
+.claude/settings.local.json
+
+# Test artifacts
+coverage.out
+
+# Frontend
+node_modules/
+web/dist/*
+!web/dist/.gitkeep
