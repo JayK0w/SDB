@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
 import { useHealthStore } from '@/stores/health'
@@ -16,7 +16,7 @@ const level = computed(() => {
 })
 
 const label = computed(
-  () => ({ ok: 'Opérationnel', degraded: 'Dégradé', critical: 'Hors ligne' })[level.value],
+  () => ({ ok: 'Opérationnel', degraded: 'Dégradé', critical: 'Hors ligne' })[level.value] ?? '',
 )
 
 const detail = computed(() => {
@@ -32,7 +32,7 @@ const dotClass = computed(
       ok: 'bg-emerald-400',
       degraded: 'bg-amber-400 animate-pulse',
       critical: 'bg-red-500 animate-pulse',
-    })[level.value],
+    })[level.value] ?? '',
 )
 </script>
 

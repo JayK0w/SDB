@@ -33,7 +33,9 @@ jobs:
         with:
           node-version: "22"
       - name: Install
-        run: npm install
+        run: npm ci
+      - name: Type-check
+        run: npm run type-check
       - name: Build
         run: npm run build
 

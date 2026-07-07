@@ -36,9 +36,12 @@ func (e *Engine) run(ctx context.Context, storage *domain.StorageConfig, cmd []s
 		return -1, err
 	}
 	spec := domain.WorkerSpec{
-		Image:       e.image,
-		Cmd:         cmd,
+		Image: e.image,
+		// Backend-specific flags (e.g. the sftp ssh command) ride along;
+		// restic parses flags anywhere on the command line.
+		Cmd:         append(append([]string{}, cmd...), repo.opts...),
 		Env:         repo.env,
+		Files:       repo.files,
 		Mounts:      append(repo.mounts, extraMounts...),
 		Labels:      labels,
 		NetworkMode: repo.network,

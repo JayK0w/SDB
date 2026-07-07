@@ -1,15 +1,16 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
 import { api } from '@/lib/api'
 import { formatDate } from '@/lib/format'
+import type { User } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useToastsStore } from '@/stores/toasts'
 
 const auth = useAuthStore()
 const toasts = useToastsStore()
 
-const users = ref([])
+const users = ref<User[]>([])
 const loading = ref(true)
 const error = ref('')
 
@@ -18,16 +19,20 @@ const newPassword = ref('')
 const newRole = ref('user')
 const creating = ref(false)
 
-const passwordTarget = ref(null)
+const passwordTarget = ref<User | null>(null)
 const passwordValue = ref('')
 
-async function load() {
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+async function load(): Promise<void> {
   loading.value = true
   try {
     users.value = await api.users.list()
     error.value = ''
   } catch (e) {
-    error.value = e.message
+    error.value = errMsg(e)
   } finally {
     loading.value = false
   }
@@ -35,7 +40,7 @@ async function load() {
 
 onMounted(load)
 
-async function createUser() {
+async function createUser(): Promise<void> {
   creating.value = true
   try {
     await api.users.create({ username: newUsername.value, password: newPassword.value, role: newRole.value })
@@ -45,42 +50,43 @@ async function createUser() {
     newRole.value = 'user'
     load()
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(errMsg(e))
   } finally {
     creating.value = false
   }
 }
 
-async function changeRole(user, role) {
+async function changeRole(user: User, role: string): Promise<void> {
   try {
     await api.users.updateRole(user.id, role)
     toasts.success(`Rôle de ${user.username} mis à jour`)
     load()
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(errMsg(e))
     load()
   }
 }
 
-async function submitPassword() {
+async function submitPassword(): Promise<void> {
+  if (!passwordTarget.value) return
   try {
     await api.users.updatePassword(passwordTarget.value.id, passwordValue.value)
     toasts.success(`Mot de passe de ${passwordTarget.value.username} mis à jour`)
     passwordTarget.value = null
     passwordValue.value = ''
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(errMsg(e))
   }
 }
 
-async function remove(user) {
+async function remove(user: User): Promise<void> {
   if (!window.confirm(`Supprimer l’utilisateur « ${user.username} » ?`)) return
   try {
     await api.users.remove(user.id)
     toasts.success(`Utilisateur « ${user.username} » supprimé`)
     load()
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(errMsg(e))
   }
 }
 </script>
@@ -134,7 +140,7 @@ async function remove(user) {
               <select
                 class="input w-40 py-1"
                 :value="u.role"
-                @change="changeRole(u, $event.target.value)"
+                @change="changeRole(u, ($event.target as HTMLSelectElement).value)"
               >
                 <option value="user">Utilisateur</option>
                 <option value="admin">Administrateur</option>

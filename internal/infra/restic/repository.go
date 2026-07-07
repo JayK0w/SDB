@@ -21,15 +21,29 @@ const (
 	dataMountRoot = "/sdb/data"
 )
 
+// Pseudo-credential keys turned into files inside the worker instead of
+// environment variables, because their consumers expect files.
+const (
+	credSSHKey     = "SSH_PRIVATE_KEY"         // sftp: private key for the ssh client
+	credGoogleJSON = "GOOGLE_CREDENTIALS_JSON" // gs: service account JSON document
+)
+
+const (
+	sshKeyPath  = "/sdb/secrets/ssh_key"
+	gcsJSONPath = "/sdb/secrets/gcs.json"
+)
+
 // repoContext is everything needed to point a worker at a repository.
 type repoContext struct {
 	env     []string
 	mounts  []domain.Mount
+	files   map[string][]byte
+	opts    []string // extra restic CLI flags (e.g. -o sftp.command=...)
 	network string
 }
 
 func repositoryFor(storage *domain.StorageConfig) (*repoContext, error) {
-	rc := &repoContext{}
+	rc := &repoContext{files: map[string][]byte{}}
 	switch storage.Type {
 	case domain.StorageLocal:
 		if !strings.HasPrefix(storage.Endpoint, "/") {
@@ -48,8 +62,17 @@ func repositoryFor(storage *domain.StorageConfig) (*repoContext, error) {
 		rc.env = append(rc.env, "RESTIC_REPOSITORY="+ensureScheme(storage.Endpoint, "s3:"))
 	case domain.StorageSFTP:
 		rc.env = append(rc.env, "RESTIC_REPOSITORY="+ensureScheme(storage.Endpoint, "sftp:"))
+		if err := configureSFTP(rc, storage); err != nil {
+			return nil, err
+		}
 	case domain.StorageREST:
 		rc.env = append(rc.env, "RESTIC_REPOSITORY="+ensureScheme(storage.Endpoint, "rest:"))
+	case domain.StorageB2:
+		rc.env = append(rc.env, "RESTIC_REPOSITORY="+ensureScheme(storage.Endpoint, "b2:"))
+	case domain.StorageAzure:
+		rc.env = append(rc.env, "RESTIC_REPOSITORY="+ensureScheme(storage.Endpoint, "azure:"))
+	case domain.StorageGCS:
+		rc.env = append(rc.env, "RESTIC_REPOSITORY="+ensureScheme(storage.Endpoint, "gs:"))
 	default:
 		return nil, fmt.Errorf("%w: unsupported storage type %q", domain.ErrInvalidInput, storage.Type)
 	}
@@ -61,9 +84,41 @@ func repositoryFor(storage *domain.StorageConfig) (*repoContext, error) {
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		rc.env = append(rc.env, k+"="+storage.Credentials[k])
+		switch k {
+		case credSSHKey:
+			rc.files[sshKeyPath] = []byte(storage.Credentials[k])
+		case credGoogleJSON:
+			rc.files[gcsJSONPath] = []byte(storage.Credentials[k])
+			rc.env = append(rc.env, "GOOGLE_APPLICATION_CREDENTIALS="+gcsJSONPath)
+		default:
+			rc.env = append(rc.env, k+"="+storage.Credentials[k])
+		}
 	}
 	return rc, nil
+}
+
+// configureSFTP wires the ssh command restic spawns for sftp: backends.
+// The private key comes from the SSH_PRIVATE_KEY credential; host keys are
+// pinned on first use (accept-new) inside the ephemeral worker.
+func configureSFTP(rc *repoContext, storage *domain.StorageConfig) error {
+	if storage.Credentials[credSSHKey] == "" {
+		return fmt.Errorf("%w: sftp storage requires the %s credential", domain.ErrInvalidInput, credSSHKey)
+	}
+	target := strings.TrimPrefix(storage.Endpoint, "sftp:")
+	target = strings.TrimPrefix(target, "//")
+	// "user@host:/path" -> "user@host"
+	if i := strings.Index(target, ":"); i >= 0 {
+		target = target[:i]
+	}
+	if target == "" {
+		return fmt.Errorf("%w: sftp endpoint must look like user@host:/path", domain.ErrInvalidInput)
+	}
+	ssh := fmt.Sprintf("ssh -i %s -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/tmp/known_hosts", sshKeyPath)
+	if port := storage.Credentials["SSH_PORT"]; port != "" {
+		ssh += " -p " + port
+	}
+	rc.opts = append(rc.opts, "-o", fmt.Sprintf("sftp.command=%s %s -s sftp", ssh, target))
+	return nil
 }
 
 func ensureScheme(endpoint, scheme string) string {

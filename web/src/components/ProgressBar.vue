@@ -1,9 +1,7 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps({
-  percent: { type: Number, default: 0 },
-})
+const props = withDefaults(defineProps<{ percent?: number }>(), { percent: 0 })
 
 const width = computed(() => `${Math.min(100, Math.max(0, props.percent)).toFixed(1)}%`)
 </script>

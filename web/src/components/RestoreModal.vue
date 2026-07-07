@@ -1,21 +1,20 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 
 import { api } from '@/lib/api'
 import { formatDate, shortID } from '@/lib/format'
+import type { Container, Snapshot, Storage } from '@/types'
 import { useToastsStore } from '@/stores/toasts'
 import Modal from './Modal.vue'
 
-const props = defineProps({
-  container: { type: Object, required: true },
-})
-const emit = defineEmits(['close'])
+const props = defineProps<{ container: Container }>()
+const emit = defineEmits<{ close: [] }>()
 
 const toasts = useToastsStore()
 
-const storages = ref([])
-const storageId = ref(null)
-const snapshots = ref([])
+const storages = ref<Storage[]>([])
+const storageId = ref<number | null>(null)
+const snapshots = ref<Snapshot[]>([])
 const snapshotsLoading = ref(false)
 const snapshotId = ref('')
 const targetVolume = ref('')
@@ -24,16 +23,16 @@ const submitting = ref(false)
 const error = ref('')
 
 const volumeNames = computed(() =>
-  (props.container.mounts || []).filter((m) => m.type === 'volume' && m.name).map((m) => m.name),
+  (props.container.mounts || []).filter((m) => m.type === 'volume' && m.name).map((m) => m.name as string),
 )
 
 onMounted(async () => {
   targetVolume.value = volumeNames.value[0] || ''
   try {
     storages.value = await api.storage.list()
-    if (storages.value.length > 0) storageId.value = storages.value[0].id
+    if (storages.value.length > 0) storageId.value = storages.value[0]!.id
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : String(e)
   }
 })
 
@@ -45,28 +44,29 @@ watch(storageId, async (id) => {
   try {
     // Only this container's snapshots, thanks to the container:<name> tag.
     snapshots.value = await api.storage.snapshots(id, [`container:${props.container.name}`])
-    if (snapshots.value.length > 0) snapshotId.value = snapshots.value[0].id
+    if (snapshots.value.length > 0) snapshotId.value = snapshots.value[0]!.id
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : String(e)
   } finally {
     snapshotsLoading.value = false
   }
 })
 
-async function submit() {
+async function submit(): Promise<void> {
+  if (!storageId.value) return
   error.value = ''
   submitting.value = true
   try {
-    await api.restores.start({
+    const rec = await api.restores.start({
       storage_id: storageId.value,
       snapshot_id: snapshotId.value,
       target_volume: targetVolume.value,
       stop_container: stopContainer.value ? props.container.id : '',
     })
-    toasts.success(`Restauration du volume ${targetVolume.value} lancée`)
+    toasts.success(`Restauration #${rec.id} du volume ${targetVolume.value} lancée`)
     emit('close')
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : String(e)
   } finally {
     submitting.value = false
   }

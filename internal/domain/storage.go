@@ -10,14 +10,17 @@ type StorageType string
 
 const (
 	StorageLocal StorageType = "local"
-	StorageS3    StorageType = "s3"
-	StorageSFTP  StorageType = "sftp"
-	StorageREST  StorageType = "rest" // restic REST server
+	StorageS3    StorageType = "s3"    // any S3-compatible endpoint (AWS, MinIO, Scaleway, ...)
+	StorageSFTP  StorageType = "sftp"  // another server over SSH (private key in credentials)
+	StorageREST  StorageType = "rest"  // restic REST server
+	StorageB2    StorageType = "b2"    // Backblaze B2
+	StorageAzure StorageType = "azure" // Azure Blob Storage
+	StorageGCS   StorageType = "gs"    // Google Cloud Storage
 )
 
 func (t StorageType) Valid() bool {
 	switch t {
-	case StorageLocal, StorageS3, StorageSFTP, StorageREST:
+	case StorageLocal, StorageS3, StorageSFTP, StorageREST, StorageB2, StorageAzure, StorageGCS:
 		return true
 	}
 	return false

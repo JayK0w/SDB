@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -8,7 +8,7 @@ import ToastHost from '@/components/ToastHost.vue'
 const router = useRouter()
 const auth = useAuthStore()
 
-function onUnauthorized() {
+function onUnauthorized(): void {
   auth.logout()
   router.push({ name: 'login' })
 }

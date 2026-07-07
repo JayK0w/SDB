@@ -4,18 +4,18 @@ import { api } from '@/lib/api'
 
 const POLL_INTERVAL_MS = 30000
 
-let pollTimer = null
+let pollTimer: ReturnType<typeof setInterval> | null = null
 
 // Backend + Docker reachability, polled for the North Star indicator.
 export const useHealthStore = defineStore('health', {
   state: () => ({
-    status: 'unknown', // ok | degraded | down | unknown
+    status: 'unknown' as 'ok' | 'degraded' | 'down' | 'unknown',
     docker: false,
     version: '',
   }),
 
   actions: {
-    async refresh() {
+    async refresh(): Promise<void> {
       try {
         const h = await api.health()
         this.status = h.status
@@ -27,14 +27,14 @@ export const useHealthStore = defineStore('health', {
       }
     },
 
-    startPolling() {
+    startPolling(): void {
       if (pollTimer) return
       this.refresh()
       pollTimer = setInterval(() => this.refresh(), POLL_INTERVAL_MS)
     },
 
-    stopPolling() {
-      clearInterval(pollTimer)
+    stopPolling(): void {
+      if (pollTimer) clearInterval(pollTimer)
       pollTimer = null
     },
   },

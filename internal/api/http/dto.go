@@ -116,6 +116,88 @@ func toRecordDTO(rec domain.BackupRecord) backupRecordDTO {
 	}
 }
 
+type restoreRecordDTO struct {
+	ID            int64      `json:"id"`
+	StorageID     int64      `json:"storage_id"`
+	SnapshotID    string     `json:"snapshot_id"`
+	TargetVolume  string     `json:"target_volume"`
+	ContainerID   string     `json:"container_id,omitempty"`
+	ContainerName string     `json:"container_name,omitempty"`
+	Status        string     `json:"status"`
+	StartTime     time.Time  `json:"start_time"`
+	EndTime       *time.Time `json:"end_time,omitempty"`
+	ErrorLog      string     `json:"error_log,omitempty"`
+}
+
+func toRestoreDTO(rec domain.RestoreRecord) restoreRecordDTO {
+	return restoreRecordDTO{
+		ID: rec.ID, StorageID: rec.StorageID, SnapshotID: rec.SnapshotID,
+		TargetVolume: rec.TargetVolume, ContainerID: rec.ContainerID, ContainerName: rec.ContainerName,
+		Status: string(rec.Status), StartTime: rec.StartTime, EndTime: rec.EndTime, ErrorLog: rec.ErrorLog,
+	}
+}
+
+type scheduleDTO struct {
+	ID            int64         `json:"id"`
+	Name          string        `json:"name"`
+	Cron          string        `json:"cron"`
+	Enabled       bool          `json:"enabled"`
+	ContainerName string        `json:"container_name"`
+	StorageID     int64         `json:"storage_id"`
+	Volumes       []string      `json:"volumes"`
+	StopContainer bool          `json:"stop_container"`
+	PreHook       *hookDTO      `json:"pre_hook,omitempty"`
+	PostHook      *hookDTO      `json:"post_hook,omitempty"`
+	Retention     *retentionDTO `json:"retention,omitempty"`
+	Tags          []string      `json:"tags"`
+	LastRunAt     *time.Time    `json:"last_run_at,omitempty"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
+}
+
+func toScheduleDTO(s domain.BackupSchedule) scheduleDTO {
+	out := scheduleDTO{
+		ID: s.ID, Name: s.Name, Cron: s.Cron, Enabled: s.Enabled,
+		ContainerName: s.ContainerName, StorageID: s.StorageID,
+		Volumes: emptyIfNil(s.Volumes), StopContainer: s.StopContainer,
+		Tags: emptyIfNil(s.Tags), LastRunAt: s.LastRunAt,
+		CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
+	}
+	out.PreHook = fromDomainHook(s.PreHook)
+	out.PostHook = fromDomainHook(s.PostHook)
+	out.Retention = fromDomainRetention(s.Retention)
+	return out
+}
+
+func emptyIfNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func fromDomainHook(h *domain.Hook) *hookDTO {
+	if h == nil {
+		return nil
+	}
+	return &hookDTO{
+		Command:        h.Command,
+		TimeoutSeconds: int(h.Timeout.Seconds()),
+		OnFailure:      string(h.OnFailure),
+	}
+}
+
+func fromDomainRetention(r *domain.RetentionPolicy) *retentionDTO {
+	if r == nil {
+		return nil
+	}
+	return &retentionDTO{
+		KeepLast: r.KeepLast, KeepHourly: r.KeepHourly, KeepDaily: r.KeepDaily,
+		KeepWeekly: r.KeepWeekly, KeepMonthly: r.KeepMonthly, KeepYearly: r.KeepYearly,
+		Prune: r.Prune,
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Requests
 // ---------------------------------------------------------------------------
@@ -233,5 +315,40 @@ func (r restoreRequest) toDomain() usecase.RestoreRequest {
 		SnapshotID:    r.SnapshotID,
 		TargetVolume:  r.TargetVolume,
 		StopContainer: r.StopContainer,
+	}
+}
+
+type scheduleRequest struct {
+	Name          string        `json:"name" binding:"required"`
+	Cron          string        `json:"cron" binding:"required"`
+	Enabled       *bool         `json:"enabled"`
+	ContainerName string        `json:"container_name" binding:"required"`
+	StorageID     int64         `json:"storage_id" binding:"required"`
+	Volumes       []string      `json:"volumes"`
+	StopContainer bool          `json:"stop_container"`
+	PreHook       *hookDTO      `json:"pre_hook"`
+	PostHook      *hookDTO      `json:"post_hook"`
+	Retention     *retentionDTO `json:"retention"`
+	Tags          []string      `json:"tags"`
+}
+
+func (r scheduleRequest) toDomain(id int64) *domain.BackupSchedule {
+	enabled := true
+	if r.Enabled != nil {
+		enabled = *r.Enabled
+	}
+	return &domain.BackupSchedule{
+		ID:            id,
+		Name:          r.Name,
+		Cron:          r.Cron,
+		Enabled:       enabled,
+		ContainerName: r.ContainerName,
+		StorageID:     r.StorageID,
+		Volumes:       r.Volumes,
+		StopContainer: r.StopContainer,
+		PreHook:       r.PreHook.toDomain(),
+		PostHook:      r.PostHook.toDomain(),
+		Retention:     r.Retention.toDomain(),
+		Tags:          r.Tags,
 	}
 }

@@ -35,7 +35,8 @@ func (f *fakeRuntime) List(context.Context, bool) ([]domain.Container, error) {
 }
 
 func (f *fakeRuntime) Get(_ context.Context, id string) (*domain.Container, error) {
-	if f.container == nil || f.container.ID != id {
+	// Docker inspect resolves both IDs and names; the fake mirrors that.
+	if f.container == nil || (f.container.ID != id && f.container.Name != id) {
 		return nil, domain.ErrNotFound
 	}
 	c := *f.container
@@ -101,6 +102,7 @@ type fakeEngine struct {
 	checkErr    error
 	summary     *domain.BackupSummary
 	backupFn    func(ctx context.Context) error // optional blocking behaviour
+	restoreFn   func(ctx context.Context) error
 	ensureCalls int
 	backupCalls int
 	checkCalls  int
@@ -129,10 +131,16 @@ func (f *fakeEngine) Backup(ctx context.Context, _ *domain.StorageConfig, _ int6
 	return f.summary, f.backupErr
 }
 
-func (f *fakeEngine) Restore(_ context.Context, _ *domain.StorageConfig, snapshotID, targetVolume string, _ chan<- domain.ProgressEvent) error {
+func (f *fakeEngine) Restore(ctx context.Context, _ *domain.StorageConfig, snapshotID, targetVolume string, _ chan<- domain.ProgressEvent) error {
 	f.mu.Lock()
 	f.restores = append(f.restores, snapshotID+"->"+targetVolume)
+	fn := f.restoreFn
 	f.mu.Unlock()
+	if fn != nil {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+	}
 	return f.restoreErr
 }
 
@@ -279,6 +287,134 @@ func (m *memStorages) Delete(_ context.Context, id int64) error {
 		return domain.ErrNotFound
 	}
 	delete(m.cfgs, id)
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// domain.RestoreHistoryRepository fake
+// ---------------------------------------------------------------------------
+
+type memRestores struct {
+	mu   sync.Mutex
+	seq  int64
+	recs map[int64]domain.RestoreRecord
+}
+
+func newMemRestores() *memRestores { return &memRestores{recs: map[int64]domain.RestoreRecord{}} }
+
+func (m *memRestores) Create(_ context.Context, rec *domain.RestoreRecord) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.seq++
+	rec.ID = m.seq
+	m.recs[rec.ID] = *rec
+	return nil
+}
+
+func (m *memRestores) Update(_ context.Context, rec *domain.RestoreRecord) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.recs[rec.ID]; !ok {
+		return domain.ErrNotFound
+	}
+	m.recs[rec.ID] = *rec
+	return nil
+}
+
+func (m *memRestores) GetByID(_ context.Context, id int64) (*domain.RestoreRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.recs[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	out := rec
+	return &out, nil
+}
+
+func (m *memRestores) List(context.Context, domain.RestoreFilter) ([]domain.RestoreRecord, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]domain.RestoreRecord, 0, len(m.recs))
+	for _, rec := range m.recs {
+		out = append(out, rec)
+	}
+	return out, nil
+}
+
+func (m *memRestores) FailInterrupted(context.Context, string) (int64, error) { return 0, nil }
+
+// ---------------------------------------------------------------------------
+// domain.ScheduleRepository fake
+// ---------------------------------------------------------------------------
+
+type memSchedules struct {
+	mu   sync.Mutex
+	seq  int64
+	byID map[int64]domain.BackupSchedule
+}
+
+func newMemSchedules() *memSchedules { return &memSchedules{byID: map[int64]domain.BackupSchedule{}} }
+
+func (m *memSchedules) Create(_ context.Context, s *domain.BackupSchedule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.seq++
+	s.ID = m.seq
+	m.byID[s.ID] = *s
+	return nil
+}
+
+func (m *memSchedules) GetByID(_ context.Context, id int64) (*domain.BackupSchedule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.byID[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	out := s
+	return &out, nil
+}
+
+func (m *memSchedules) List(context.Context) ([]domain.BackupSchedule, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]domain.BackupSchedule, 0, len(m.byID))
+	for _, s := range m.byID {
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (m *memSchedules) Update(_ context.Context, s *domain.BackupSchedule) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byID[s.ID]; !ok {
+		return domain.ErrNotFound
+	}
+	m.byID[s.ID] = *s
+	return nil
+}
+
+func (m *memSchedules) Delete(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.byID[id]; !ok {
+		return domain.ErrNotFound
+	}
+	delete(m.byID, id)
+	return nil
+}
+
+func (m *memSchedules) TouchLastRun(_ context.Context, id int64, at time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	s, ok := m.byID[id]
+	if !ok {
+		return domain.ErrNotFound
+	}
+	s.LastRunAt = &at
+	m.byID[id] = s
 	return nil
 }
 

@@ -1,10 +1,15 @@
 package docker
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"path"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
@@ -54,6 +59,12 @@ func (r *Runtime) RunWorker(ctx context.Context, spec domain.WorkerSpec, stdout,
 		}
 	}()
 
+	if len(spec.Files) > 0 {
+		if err := r.copyFiles(ctx, created.ID, spec.Files); err != nil {
+			return -1, err
+		}
+	}
+
 	attach, err := r.cli.ContainerAttach(ctx, created.ID, container.AttachOptions{
 		Stream: true, Stdout: true, Stderr: true,
 	})
@@ -90,6 +101,59 @@ func (r *Runtime) RunWorker(ctx context.Context, spec domain.WorkerSpec, stdout,
 		}
 		return int(res.StatusCode), nil
 	}
+}
+
+// copyFiles injects secret files into the created (not yet started)
+// worker as a tar stream: keys and service accounts never touch the host
+// filesystem or the container environment.
+func (r *Runtime) copyFiles(ctx context.Context, id string, files map[string][]byte) error {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+
+	paths := make([]string, 0, len(files))
+	dirs := map[string]bool{}
+	for p := range files {
+		paths = append(paths, p)
+		for d := path.Dir(p); d != "/" && d != "."; d = path.Dir(d) {
+			dirs[d] = true
+		}
+	}
+	sort.Strings(paths)
+	dirList := make([]string, 0, len(dirs))
+	for d := range dirs {
+		dirList = append(dirList, d)
+	}
+	sort.Strings(dirList) // parents before children
+
+	for _, d := range dirList {
+		if err := tw.WriteHeader(&tar.Header{
+			Typeflag: tar.TypeDir,
+			Name:     strings.TrimPrefix(d, "/") + "/",
+			Mode:     0o700,
+		}); err != nil {
+			return fmt.Errorf("building secret archive: %w", err)
+		}
+	}
+	for _, p := range paths {
+		content := files[p]
+		if err := tw.WriteHeader(&tar.Header{
+			Name: strings.TrimPrefix(p, "/"),
+			Mode: 0o600,
+			Size: int64(len(content)),
+		}); err != nil {
+			return fmt.Errorf("building secret archive: %w", err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			return fmt.Errorf("building secret archive: %w", err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		return err
+	}
+	if err := r.cli.CopyToContainer(ctx, id, "/", &buf, container.CopyToContainerOptions{}); err != nil {
+		return fmt.Errorf("injecting worker files: %w", translate(err))
+	}
+	return nil
 }
 
 func toDockerMount(m domain.Mount) mount.Mount {

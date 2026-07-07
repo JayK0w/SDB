@@ -1,8 +1,9 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
 import { api } from '@/lib/api'
 import { formatDate, shortID } from '@/lib/format'
+import type { Snapshot, Storage } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useToastsStore } from '@/stores/toasts'
 import StorageModal from '@/components/StorageModal.vue'
@@ -10,21 +11,25 @@ import StorageModal from '@/components/StorageModal.vue'
 const auth = useAuthStore()
 const toasts = useToastsStore()
 
-const storages = ref([])
+const storages = ref<Storage[]>([])
 const loading = ref(true)
 const error = ref('')
 const showCreate = ref(false)
-const expanded = ref(null)
-const snapshots = ref([])
+const expanded = ref<number | null>(null)
+const snapshots = ref<Snapshot[]>([])
 const snapshotsLoading = ref(false)
 
-async function load() {
+function errMsg(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+async function load(): Promise<void> {
   loading.value = true
   try {
     storages.value = await api.storage.list()
     error.value = ''
   } catch (e) {
-    error.value = e.message
+    error.value = errMsg(e)
   } finally {
     loading.value = false
   }
@@ -32,7 +37,7 @@ async function load() {
 
 onMounted(load)
 
-async function toggleSnapshots(storage) {
+async function toggleSnapshots(storage: Storage): Promise<void> {
   if (expanded.value === storage.id) {
     expanded.value = null
     return
@@ -43,29 +48,29 @@ async function toggleSnapshots(storage) {
   try {
     snapshots.value = await api.storage.snapshots(storage.id)
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(errMsg(e))
   } finally {
     snapshotsLoading.value = false
   }
 }
 
-async function runCheck(storage) {
+async function runCheck(storage: Storage): Promise<void> {
   try {
     await api.storage.check(storage.id)
     toasts.success(`Vérification d’intégrité de « ${storage.name} » lancée`)
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(errMsg(e))
   }
 }
 
-async function remove(storage) {
+async function remove(storage: Storage): Promise<void> {
   if (!window.confirm(`Supprimer le stockage « ${storage.name} » ? Le dépôt restic n’est pas effacé.`)) return
   try {
     await api.storage.remove(storage.id)
     toasts.success(`Stockage « ${storage.name} » supprimé`)
     load()
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(errMsg(e))
   }
 }
 </script>

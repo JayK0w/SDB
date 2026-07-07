@@ -16,9 +16,12 @@ const (
 
 // ProgressEvent is the unit published through the hub. The JSON tags are
 // the WebSocket wire format consumed by the Vue frontend, which makes this
-// struct the single source of truth for that contract.
+// struct the single source of truth for that contract. Exactly one of
+// BackupID/RestoreID is set for job-scoped events.
 type ProgressEvent struct {
-	BackupID   int64        `json:"backup_id"`
+	BackupID   int64        `json:"backup_id,omitempty"`
+	RestoreID  int64        `json:"restore_id,omitempty"`
+	Container  string       `json:"container,omitempty"`
 	Type       EventType    `json:"type"`
 	Time       time.Time    `json:"time"`
 	Status     BackupStatus `json:"status,omitempty"`

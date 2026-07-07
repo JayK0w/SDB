@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"net/http"
@@ -45,6 +46,20 @@ func (s *Server) authRequired() gin.HandlerFunc {
 			return
 		}
 		c.Set(userContextKey, claims)
+		c.Next()
+	}
+}
+
+// staticTokenRequired guards an endpoint with a fixed bearer token,
+// compared in constant time (scrapers cannot refresh JWTs).
+func (s *Server) staticTokenRequired(token string) gin.HandlerFunc {
+	want := []byte(token)
+	return func(c *gin.Context) {
+		got := []byte(bearerToken(c))
+		if subtle.ConstantTimeCompare(got, want) != 1 {
+			s.respondError(c, fmt.Errorf("%w: invalid metrics token", domain.ErrUnauthorized))
+			return
+		}
 		c.Next()
 	}
 }

@@ -1,7 +1,8 @@
-<script setup>
+<script setup lang="ts">
 import { ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { ApiError } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
@@ -13,14 +14,18 @@ const password = ref('')
 const error = ref('')
 const submitting = ref(false)
 
-async function submit() {
+async function submit(): Promise<void> {
   error.value = ''
   submitting.value = true
   try {
     await auth.login(username.value, password.value)
     router.push(typeof route.query.redirect === 'string' ? route.query.redirect : { name: 'dashboard' })
   } catch (e) {
-    error.value = e.status === 401 ? 'Identifiants invalides.' : e.message
+    if (e instanceof ApiError && e.status === 401) {
+      error.value = 'Identifiants invalides.'
+    } else {
+      error.value = e instanceof Error ? e.message : String(e)
+    }
   } finally {
     submitting.value = false
   }

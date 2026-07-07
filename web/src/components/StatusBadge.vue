@@ -1,12 +1,10 @@
-<script setup>
+<script setup lang="ts">
 import { computed } from 'vue'
 
-const props = defineProps({
-  status: { type: String, required: true },
-})
+const props = defineProps<{ status: string }>()
 
 // Functional colors: red = critical, green = success, amber = warning.
-const MAP = {
+const MAP: Record<string, { label: string; classes: string }> = {
   success: { label: 'Succès', classes: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' },
   warning: { label: 'Avertissement', classes: 'bg-amber-500/15 text-amber-400 border-amber-500/30' },
   failed: { label: 'Échec', classes: 'bg-red-500/15 text-red-400 border-red-500/30' },

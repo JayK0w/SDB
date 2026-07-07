@@ -1,9 +1,10 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 
 import { api } from '@/lib/api'
 import { formatBytes } from '@/lib/format'
-import { useEventsStore } from '@/stores/events'
+import type { Container } from '@/types'
+import { useEventsStore, type JobProgress } from '@/stores/events'
 import { useToastsStore } from '@/stores/toasts'
 import ProgressBar from '@/components/ProgressBar.vue'
 import StatusBadge from '@/components/StatusBadge.vue'
@@ -13,37 +14,47 @@ import RestoreModal from '@/components/RestoreModal.vue'
 const events = useEventsStore()
 const toasts = useToastsStore()
 
-const containers = ref([])
+const containers = ref<Container[]>([])
 const loading = ref(true)
 const loadError = ref('')
-const backupTarget = ref(null)
-const restoreTarget = ref(null)
+const backupTarget = ref<Container | null>(null)
+const restoreTarget = ref<Container | null>(null)
 
-async function load() {
+async function load(): Promise<void> {
   try {
     containers.value = await api.containers.list(true)
     loadError.value = ''
   } catch (e) {
-    loadError.value = e.message
+    loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
   }
 }
 
 onMounted(load)
-// Terminal backup events change container states (cold backups): refresh.
+// Terminal events change container states (cold backups/restores): refresh.
 watch(() => events.historyDirty, load)
 
-async function cancelBackup(id) {
+async function cancelJob(job: JobProgress): Promise<void> {
   try {
-    await api.backups.cancel(id)
-    toasts.warning(`Annulation de la sauvegarde #${id} demandée`)
+    if (job.kind === 'restore') {
+      await api.restores.cancel(job.id)
+      toasts.warning(`Annulation de la restauration #${job.id} demandée`)
+    } else {
+      await api.backups.cancel(job.id)
+      toasts.warning(`Annulation de la sauvegarde #${job.id} demandée`)
+    }
   } catch (e) {
-    toasts.error(e.message)
+    toasts.error(e instanceof Error ? e.message : String(e))
   }
 }
 
-function stateDot(state) {
+function jobLabel(job: JobProgress): string {
+  const kind = job.kind === 'restore' ? 'Restauration' : 'Sauvegarde'
+  return job.container ? `${kind} #${job.id} — ${job.container}` : `${kind} #${job.id}`
+}
+
+function stateDot(state: string): string {
   if (state === 'running') return 'bg-emerald-400'
   if (state === 'paused') return 'bg-amber-400'
   return 'bg-zinc-600'
@@ -54,23 +65,23 @@ function stateDot(state) {
   <div class="space-y-8">
     <header>
       <h1 class="text-xl font-semibold text-zinc-100">Tableau de bord</h1>
-      <p class="mt-1 text-sm text-zinc-500">Conteneurs détectés et sauvegardes en cours.</p>
+      <p class="mt-1 text-sm text-zinc-500">Conteneurs détectés, sauvegardes et restaurations en cours.</p>
     </header>
 
-    <!-- Live backups -->
-    <section v-if="events.runningBackups.length > 0" class="space-y-3">
-      <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-400">Sauvegardes en cours</h2>
+    <!-- Live jobs -->
+    <section v-if="events.runningJobs.length > 0" class="space-y-3">
+      <h2 class="text-sm font-medium uppercase tracking-wide text-zinc-400">Opérations en cours</h2>
       <div
-        v-for="job in events.runningBackups"
-        :key="job.backupId"
+        v-for="job in events.runningJobs"
+        :key="`${job.kind}:${job.id}`"
         class="card space-y-3 p-4"
       >
         <div class="flex items-center justify-between gap-4">
           <div class="flex items-center gap-3">
             <StatusBadge :status="job.status" />
-            <span class="text-sm text-zinc-300">Sauvegarde #{{ job.backupId }}</span>
+            <span class="text-sm text-zinc-300">{{ jobLabel(job) }}</span>
           </div>
-          <button class="btn btn-ghost" @click="cancelBackup(job.backupId)">Annuler</button>
+          <button class="btn btn-ghost" @click="cancelJob(job)">Annuler</button>
         </div>
         <ProgressBar :percent="job.percent || 0" />
         <div class="flex justify-between text-xs text-zinc-500">

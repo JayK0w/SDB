@@ -307,11 +307,12 @@ func (s *BackupService) transition(ctx context.Context, rec *domain.BackupRecord
 		s.logger.Error("persisting backup status", "backup_id", rec.ID, "error", err)
 	}
 	s.publisher.Publish(domain.ProgressEvent{
-		BackupID: rec.ID,
-		Type:     domain.EventStatus,
-		Time:     time.Now().UTC(),
-		Status:   status,
-		Message:  msg,
+		BackupID:  rec.ID,
+		Container: rec.ContainerName,
+		Type:      domain.EventStatus,
+		Time:      time.Now().UTC(),
+		Status:    status,
+		Message:   msg,
 	})
 }
 
@@ -355,6 +356,7 @@ func (s *BackupService) finish(ctx context.Context, rec *domain.BackupRecord, er
 	}
 	s.publisher.Publish(domain.ProgressEvent{
 		BackupID:   rec.ID,
+		Container:  rec.ContainerName,
 		Type:       domain.EventStatus,
 		Time:       now,
 		Status:     rec.Status,

@@ -67,9 +67,24 @@ over the WebSocket.
 | POST | `/backups` | user | Start a backup → 202 + record |
 | DELETE | `/backups/:id` | user | Cancel a running backup |
 | GET | `/backups/history[/:id]` | user | Backup history (filterable) |
-| POST | `/restores` | user | Start a restore → 202 |
+| POST | `/restores` | user | Start a restore → 202 + record |
+| DELETE | `/restores/:id` | user | Cancel a running restore |
+| GET | `/restores/history` | user | Restore history (filterable) |
+| GET/POST/PUT/DELETE | `/schedules[/:id]` | user | Recurring backups (cron, UTC) |
+| POST | `/schedules/:id/run` | user | Fire a schedule now → 202 |
 | GET | `/ws/metrics` | user | WebSocket event stream (`?token=`) |
+| GET | `/metrics` | token | Prometheus metrics (static `SDB_METRICS_TOKEN`; disabled if unset) |
 | GET/POST/PUT/DELETE | `/users...` | admin | User management (password change: self or admin) |
+
+## Storage backends
+
+`local` (host path), `s3` (any S3-compatible: AWS, MinIO, Scaleway…),
+`b2` (Backblaze), `azure` (Blob Storage), `gs` (Google Cloud Storage,
+service account JSON in the `GOOGLE_CREDENTIALS_JSON` credential),
+`sftp` (another server over SSH, private key in `SSH_PRIVATE_KEY`) and
+`rest` (restic REST server). Credentials are stored AES-256-GCM
+encrypted; key material is injected into the ephemeral worker as files
+with 0600 permissions, never through the host filesystem.
 
 ## Configuration
 
@@ -124,6 +139,5 @@ logs on first start.
 - [x] Phase 4 — REST API (Gin), JWT auth, WebSocket hub
 - [x] Phase 5 — Vue 3 dashboard (dark-mode-first, North Star indicator, live metrics)
 - [x] Phase 6 — hardened packaging: multi-stage image, compose file, CI
-
-Next candidates: scheduled backups (cron), restore history, TypeScript
-migration of the frontend, Prometheus metrics endpoint.
+- [x] v0.2 — scheduled backups (cron), restore history, TypeScript
+      frontend, Prometheus `/metrics`, cloud backends (B2/Azure/GCS/SFTP)

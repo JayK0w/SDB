@@ -50,6 +50,9 @@ services:
       SDB_LOG_FORMAT: json
       # Weekly repository integrity checks; set to 0 to disable.
       SDB_CHECK_INTERVAL: 168h
+      # Prometheus /metrics (disabled when empty); export the variable or
+      # put it in a .env file next to this compose file.
+      SDB_METRICS_TOKEN: ${SDB_METRICS_TOKEN:-}
 
     secrets:
       - sdb_master_key

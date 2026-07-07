@@ -1,4 +1,4 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 
@@ -20,13 +20,14 @@ onUnmounted(() => {
   health.stopPolling()
 })
 
-function logout() {
+function logout(): void {
   auth.logout()
   router.push({ name: 'login' })
 }
 
 const links = [
   { name: 'dashboard', label: 'Tableau de bord' },
+  { name: 'schedules', label: 'Planifications' },
   { name: 'history', label: 'Historique' },
   { name: 'storage', label: 'Stockage' },
 ]

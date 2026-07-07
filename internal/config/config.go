@@ -75,6 +75,9 @@ type Auth struct {
 	// and printed once in the logs.
 	AdminUsername string
 	AdminPassword string
+	// MetricsToken protects GET /metrics with a static bearer token
+	// (Prometheus-friendly). Empty disables the endpoint entirely.
+	MetricsToken string
 }
 
 type Maintenance struct {
@@ -119,6 +122,10 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	metricsToken, err := getSecret("SDB_METRICS_TOKEN")
+	if err != nil {
+		return nil, err
+	}
 	checkInterval, err := getenvDuration("SDB_CHECK_INTERVAL", 168*time.Hour)
 	if err != nil {
 		return nil, err
@@ -148,6 +155,7 @@ func Load() (*Config, error) {
 			MasterKey:     masterKey,
 			AdminUsername: getenv("SDB_ADMIN_USERNAME", "admin"),
 			AdminPassword: adminPassword,
+			MetricsToken:  metricsToken,
 		},
 		Maintenance: Maintenance{
 			CheckInterval: checkInterval,

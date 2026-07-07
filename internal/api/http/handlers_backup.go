@@ -95,9 +95,59 @@ func (s *Server) handleStartRestore(c *gin.Context) {
 		s.respondError(c, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err))
 		return
 	}
-	if err := s.svc.Restores.Start(c.Request.Context(), req.toDomain()); err != nil {
+	rec, err := s.svc.Restores.Start(c.Request.Context(), req.toDomain())
+	if err != nil {
 		s.respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
+	c.JSON(http.StatusAccepted, toRestoreDTO(*rec))
+}
+
+func (s *Server) handleCancelRestore(c *gin.Context) {
+	id, err := pathID(c)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	if err := s.svc.Restores.Cancel(id); err != nil {
+		s.respondError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+func (s *Server) handleRestoreHistory(c *gin.Context) {
+	filter := domain.RestoreFilter{
+		TargetVolume: c.Query("target_volume"),
+		Status:       domain.BackupStatus(c.Query("status")),
+	}
+	for name, dst := range map[string]*int{"limit": &filter.Limit, "offset": &filter.Offset} {
+		if v := c.Query(name); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				s.respondError(c, fmt.Errorf("%w: %s must be a positive integer", domain.ErrInvalidInput, name))
+				return
+			}
+			*dst = n
+		}
+	}
+	if v := c.Query("storage_id"); v != "" {
+		n, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || n <= 0 {
+			s.respondError(c, fmt.Errorf("%w: storage_id must be a positive integer", domain.ErrInvalidInput))
+			return
+		}
+		filter.StorageID = n
+	}
+
+	records, err := s.svc.Restores.History(c.Request.Context(), filter)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	out := make([]restoreRecordDTO, 0, len(records))
+	for _, rec := range records {
+		out = append(out, toRestoreDTO(rec))
+	}
+	c.JSON(http.StatusOK, out)
 }

@@ -23,6 +23,10 @@ type Options struct {
 	Version   string
 	// Static, when set, is the built frontend served for non-API routes.
 	Static fs.FS
+	// Metrics, when set together with MetricsToken, exposes GET /metrics
+	// behind the static bearer token (Prometheus-friendly auth).
+	Metrics      http.Handler
+	MetricsToken string
 }
 
 // Services groups the usecases the delivery layer exposes.
@@ -32,6 +36,7 @@ type Services struct {
 	Storages   *usecase.StorageService
 	Backups    *usecase.BackupService
 	Restores   *usecase.RestoreService
+	Scheduler  *usecase.SchedulerService
 }
 
 type Server struct {
@@ -89,6 +94,15 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 		authed.GET("/backups/history/:id", s.handleHistoryRecord)
 
 		authed.POST("/restores", s.handleStartRestore)
+		authed.DELETE("/restores/:id", s.handleCancelRestore)
+		authed.GET("/restores/history", s.handleRestoreHistory)
+
+		authed.GET("/schedules", s.handleListSchedules)
+		authed.GET("/schedules/:id", s.handleGetSchedule)
+		authed.POST("/schedules", s.handleCreateSchedule)
+		authed.PUT("/schedules/:id", s.handleUpdateSchedule)
+		authed.DELETE("/schedules/:id", s.handleDeleteSchedule)
+		authed.POST("/schedules/:id/run", s.handleRunSchedule)
 
 		authed.GET("/ws/metrics", s.handleMetricsWS)
 
@@ -107,6 +121,12 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 			admin.PUT("/users/:id/role", s.handleUpdateRole)
 			admin.DELETE("/users/:id", s.handleDeleteUser)
 		}
+	}
+
+	// Prometheus exposition: disabled unless a token is configured — a
+	// metrics endpoint open by default would leak operational detail.
+	if opts.Metrics != nil && opts.MetricsToken != "" {
+		r.GET("/metrics", s.staticTokenRequired(opts.MetricsToken), gin.WrapH(opts.Metrics))
 	}
 
 	if opts.Static != nil {

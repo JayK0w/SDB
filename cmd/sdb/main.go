@@ -12,6 +12,7 @@ import (
 	httpapi "github.com/standalone-docker-backup/sdb/internal/api/http"
 	"github.com/standalone-docker-backup/sdb/internal/config"
 	"github.com/standalone-docker-backup/sdb/internal/infra/crypto"
+	"github.com/standalone-docker-backup/sdb/internal/metrics"
 	"github.com/standalone-docker-backup/sdb/internal/infra/docker"
 	"github.com/standalone-docker-backup/sdb/internal/infra/restic"
 	"github.com/standalone-docker-backup/sdb/internal/infra/sqlite"
@@ -72,6 +73,12 @@ func run() error {
 	} else if n > 0 {
 		logger.Warn("marked interrupted backup runs as failed", "count", n)
 	}
+	restoreHistory := sqlite.NewRestoreRepo(db)
+	if n, err := restoreHistory.FailInterrupted(ctx, "interrupted by SDB restart"); err != nil {
+		return fmt.Errorf("cleaning interrupted restores: %w", err)
+	} else if n > 0 {
+		logger.Warn("marked interrupted restores as failed", "count", n)
+	}
 
 	runtime, err := docker.New(docker.Options{
 		Host:        cfg.Docker.Host,
@@ -116,30 +123,45 @@ func run() error {
 		go maintenance.Schedule(ctx, cfg.Maintenance.CheckInterval)
 	}
 
-	// The hub is the EventPublisher every long-running usecase writes to.
+	// Every long-running usecase publishes to the hub (live WebSocket
+	// stream) and to the Prometheus collector through one fan-out.
 	hub := httpapi.NewHub(logger)
 	go hub.Run(ctx)
+	collector := metrics.New(version)
+	publisher := usecase.MultiPublisher{hub, collector}
 
-	backupSvc := usecase.NewBackupService(runtime, engine, storageRepo, history, hub, logger)
-	restoreSvc := usecase.NewRestoreService(runtime, engine, storageRepo, hub, logger)
+	backupSvc := usecase.NewBackupService(runtime, engine, storageRepo, history, publisher, logger)
+	restoreSvc := usecase.NewRestoreService(runtime, engine, storageRepo, restoreHistory, publisher, logger)
+	schedulerSvc := usecase.NewSchedulerService(sqlite.NewScheduleRepo(db), backupSvc, logger)
+	go func() {
+		if err := schedulerSvc.Run(ctx); err != nil {
+			logger.Error("backup scheduler stopped", "error", err)
+		}
+	}()
 
 	staticFS, err := web.Dist()
 	if err != nil {
 		logger.Warn("embedded frontend unavailable, serving API only (build it with `make web-build`)", "error", err)
 	}
+	if cfg.Auth.MetricsToken != "" {
+		logger.Info("prometheus metrics enabled at /metrics")
+	}
 
 	server := httpapi.NewServer(httpapi.Options{
-		Addr:      cfg.Server.Addr(),
-		JWTSecret: cfg.Auth.JWTSecret,
-		TokenTTL:  cfg.Auth.TokenTTL,
-		Version:   version,
-		Static:    staticFS,
+		Addr:         cfg.Server.Addr(),
+		JWTSecret:    cfg.Auth.JWTSecret,
+		TokenTTL:     cfg.Auth.TokenTTL,
+		Version:      version,
+		Static:       staticFS,
+		Metrics:      collector.Handler(),
+		MetricsToken: cfg.Auth.MetricsToken,
 	}, httpapi.Services{
 		Auth:       authSvc,
 		Containers: usecase.NewContainerService(runtime),
 		Storages:   usecase.NewStorageService(storageRepo, engine, logger),
 		Backups:    backupSvc,
 		Restores:   restoreSvc,
+		Scheduler:  schedulerSvc,
 	}, hub, logger)
 
 	logger.Info("HTTP API listening", "addr", cfg.Server.Addr())

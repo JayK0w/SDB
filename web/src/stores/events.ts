@@ -1,50 +1,64 @@
 import { defineStore } from 'pinia'
 
 import { getToken } from '@/lib/api'
-import { createReconnectingSocket } from '@/lib/ws'
+import { createReconnectingSocket, type ReconnectingSocket, type SocketStatus } from '@/lib/ws'
+import type { JobStatus, ProgressEvent } from '@/types'
 import { useToastsStore } from './toasts'
 
 const MAX_EVENTS = 200
 const TERMINAL_LINGER_MS = 10000
-const TERMINAL = new Set(['success', 'warning', 'failed', 'canceled'])
+const TERMINAL: ReadonlySet<string> = new Set(['success', 'warning', 'failed', 'canceled'])
 
-let socket = null
+export interface JobProgress {
+  kind: 'backup' | 'restore'
+  id: number
+  container?: string
+  status: JobStatus
+  percent: number
+  bytesDone?: number
+  totalBytes?: number
+  message?: string
+  snapshotId?: string
+  lastError?: string
+}
 
-function wsURL() {
+let socket: ReconnectingSocket | null = null
+
+function wsURL(): string {
   const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
   return `${scheme}://${window.location.host}/api/v1/ws/metrics?token=${encodeURIComponent(getToken() || '')}`
 }
 
 // Live ProgressEvent stream from the backend hub: the event log, plus a
-// per-backup aggregate the dashboard renders as progress cards.
+// per-job aggregate the dashboard renders as progress cards.
 export const useEventsStore = defineStore('events', {
   state: () => ({
-    wsStatus: 'idle', // idle | connecting | open | closed
-    events: [],
-    progress: {}, // backup_id -> { status, percent, bytesDone, totalBytes, message, snapshotId }
+    wsStatus: 'idle' as SocketStatus | 'idle',
+    events: [] as ProgressEvent[],
+    progress: {} as Record<string, JobProgress>,
     historyDirty: 0, // bumped on terminal events so views can refresh
   }),
 
   getters: {
-    runningBackups: (s) =>
+    runningJobs: (s): JobProgress[] =>
       Object.values(s.progress)
         .filter((p) => !TERMINAL.has(p.status))
-        .sort((a, b) => b.backupId - a.backupId),
+        .sort((a, b) => b.id - a.id),
   },
 
   actions: {
-    connect() {
+    connect(): void {
       if (socket) return
       socket = createReconnectingSocket({
         url: wsURL,
-        onMessage: (ev) => this.handle(ev),
+        onMessage: (msg) => this.handle(msg as ProgressEvent),
         onStatus: (status) => {
           this.wsStatus = status
         },
       })
     },
 
-    disconnect() {
+    disconnect(): void {
       socket?.close()
       socket = null
       this.wsStatus = 'idle'
@@ -52,13 +66,16 @@ export const useEventsStore = defineStore('events', {
       this.events = []
     },
 
-    handle(ev) {
+    handle(ev: ProgressEvent): void {
       this.events.unshift(ev)
       if (this.events.length > MAX_EVENTS) this.events.length = MAX_EVENTS
 
-      const id = ev.backup_id
+      const kind: JobProgress['kind'] = ev.restore_id ? 'restore' : 'backup'
+      const id = ev.restore_id || ev.backup_id
       if (!id) return
-      const cur = this.progress[id] || { backupId: id, status: 'running', percent: 0 }
+      const key = `${kind}:${id}`
+      const cur: JobProgress = this.progress[key] || { kind, id, status: 'running', percent: 0 }
+      if (ev.container) cur.container = ev.container
 
       switch (ev.type) {
         case 'progress':
@@ -77,35 +94,35 @@ export const useEventsStore = defineStore('events', {
         case 'error':
           cur.lastError = ev.message
           break
-        case 'log':
         default:
           break
       }
-      this.progress[id] = { ...cur }
+      this.progress[key] = { ...cur }
 
-      if (ev.type === 'status' && TERMINAL.has(ev.status)) {
+      if (ev.type === 'status' && ev.status && TERMINAL.has(ev.status)) {
         this.historyDirty += 1
-        this.notifyTerminal(id, ev.status)
+        this.notifyTerminal(kind, id, ev.status)
         setTimeout(() => {
-          delete this.progress[id]
+          delete this.progress[key]
         }, TERMINAL_LINGER_MS)
       }
     },
 
-    notifyTerminal(id, status) {
+    notifyTerminal(kind: JobProgress['kind'], id: number, status: JobStatus): void {
       const toasts = useToastsStore()
+      const label = kind === 'restore' ? `Restauration #${id}` : `Sauvegarde #${id}`
       switch (status) {
         case 'success':
-          toasts.success(`Sauvegarde #${id} terminée avec succès`)
+          toasts.success(`${label} terminée avec succès`)
           break
         case 'warning':
-          toasts.warning(`Sauvegarde #${id} terminée avec avertissements`)
+          toasts.warning(`${label} terminée avec avertissements`)
           break
         case 'canceled':
-          toasts.warning(`Sauvegarde #${id} annulée`)
+          toasts.warning(`${label} annulée`)
           break
         default:
-          toasts.error(`Sauvegarde #${id} échouée`)
+          toasts.error(`${label} échouée`)
       }
     },
   },

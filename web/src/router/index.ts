@@ -5,6 +5,7 @@ import AppLayout from '@/components/AppLayout.vue'
 import LoginView from '@/views/LoginView.vue'
 import DashboardView from '@/views/DashboardView.vue'
 import HistoryView from '@/views/HistoryView.vue'
+import SchedulesView from '@/views/SchedulesView.vue'
 import StorageView from '@/views/StorageView.vue'
 import UsersView from '@/views/UsersView.vue'
 
@@ -17,6 +18,7 @@ const router = createRouter({
       component: AppLayout,
       children: [
         { path: '', name: 'dashboard', component: DashboardView },
+        { path: 'schedules', name: 'schedules', component: SchedulesView },
         { path: 'history', name: 'history', component: HistoryView },
         { path: 'storage', name: 'storage', component: StorageView },
         { path: 'users', name: 'users', component: UsersView, meta: { admin: true } },

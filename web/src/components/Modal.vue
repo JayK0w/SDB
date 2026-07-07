@@ -1,13 +1,11 @@
-<script setup>
+<script setup lang="ts">
 import { onMounted, onUnmounted } from 'vue'
 
-defineProps({
-  title: { type: String, required: true },
-})
+defineProps<{ title: string }>()
 
-const emit = defineEmits(['close'])
+const emit = defineEmits<{ close: [] }>()
 
-function onKeydown(e) {
+function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') emit('close')
 }
 

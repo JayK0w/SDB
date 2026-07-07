@@ -50,8 +50,19 @@ func Open(path string) (*sql.DB, error) {
 // Migrate applies the embedded migrations in filename order. Each file is
 // named NNNN_description.sql and runs exactly once, inside a transaction,
 // tracked in schema_migrations.
+//
+// Migrations run on a dedicated connection with foreign keys disabled:
+// SQLite table rebuilds (the only way to change constraints) require it,
+// and the pragma cannot be toggled inside a transaction. Integrity is
+// re-checked with foreign_key_check after every migration.
 func Migrate(ctx context.Context, db *sql.DB) error {
-	if _, err := db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
 		version    INTEGER PRIMARY KEY,
 		applied_at TEXT NOT NULL
 	)`); err != nil {
@@ -59,7 +70,7 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 
 	applied := map[int]bool{}
-	rows, err := db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	rows, err := conn.QueryContext(ctx, `SELECT version FROM schema_migrations`)
 	if err != nil {
 		return fmt.Errorf("reading applied migrations: %w", err)
 	}
@@ -95,21 +106,44 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		if err != nil {
 			return err
 		}
-		tx, err := db.BeginTx(ctx, nil)
-		if err != nil {
+		if err := applyMigration(ctx, conn, name, version, string(body)); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("applying migration %s: %w", name, err)
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, version, now()); err != nil {
-			tx.Rollback()
-			return fmt.Errorf("recording migration %s: %w", name, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("committing migration %s: %w", name, err)
-		}
+	}
+	return nil
+}
+
+func applyMigration(ctx context.Context, conn *sql.Conn, name string, version int, body string) error {
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys=OFF`); err != nil {
+		return err
+	}
+	defer conn.ExecContext(ctx, `PRAGMA foreign_keys=ON`)
+
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, body); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("applying migration %s: %w", name, err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)`, version, now()); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("recording migration %s: %w", name, err)
+	}
+	// Verify referential integrity before making the migration permanent.
+	var table string
+	err = tx.QueryRowContext(ctx, `SELECT "table" FROM pragma_foreign_key_check LIMIT 1`).Scan(&table)
+	switch {
+	case err == nil:
+		tx.Rollback()
+		return fmt.Errorf("migration %s: foreign key violation in table %s", name, table)
+	case err != sql.ErrNoRows:
+		tx.Rollback()
+		return fmt.Errorf("migration %s: checking foreign keys: %w", name, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing migration %s: %w", name, err)
 	}
 	return nil
 }

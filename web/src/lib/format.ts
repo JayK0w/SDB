@@ -1,4 +1,4 @@
-export function formatBytes(n) {
+export function formatBytes(n: number | null | undefined): string {
   if (n === null || n === undefined || Number.isNaN(n)) return '—'
   if (n < 1024) return `${n} o`
   const units = ['Kio', 'Mio', 'Gio', 'Tio']
@@ -12,16 +12,16 @@ export function formatBytes(n) {
   return `${value.toFixed(value >= 100 ? 0 : 1)} ${unit}`
 }
 
-export function formatDate(iso) {
+export function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—'
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '—'
   return d.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'medium' })
 }
 
-export function formatDuration(startIso, endIso) {
+export function formatDuration(startIso?: string, endIso?: string): string {
   if (!startIso || !endIso) return '—'
-  const ms = new Date(endIso) - new Date(startIso)
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime()
   if (Number.isNaN(ms) || ms < 0) return '—'
   const s = Math.round(ms / 1000)
   if (s < 60) return `${s}s`
@@ -30,6 +30,6 @@ export function formatDuration(startIso, endIso) {
   return `${Math.floor(m / 60)}h ${m % 60}min`
 }
 
-export function shortID(id, length = 8) {
+export function shortID(id: string | null | undefined, length = 8): string {
   return id ? id.slice(0, length) : '—'
 }

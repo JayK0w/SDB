@@ -1,19 +1,18 @@
-<script setup>
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { api } from '@/lib/api'
+import type { Container, Hook, Storage } from '@/types'
 import { useToastsStore } from '@/stores/toasts'
 import Modal from './Modal.vue'
 
-const props = defineProps({
-  container: { type: Object, required: true },
-})
-const emit = defineEmits(['close'])
+const props = defineProps<{ container: Container }>()
+const emit = defineEmits<{ close: [] }>()
 
 const toasts = useToastsStore()
 
-const storages = ref([])
-const storageId = ref(null)
+const storages = ref<Storage[]>([])
+const storageId = ref<number | null>(null)
 const stopContainer = ref(false)
 const submitting = ref(false)
 const error = ref('')
@@ -21,9 +20,9 @@ const error = ref('')
 // Progressive disclosure: the essential form is two fields; everything
 // else lives behind this toggle.
 const showAdvanced = ref(false)
-const selectedVolumes = ref([])
+const selectedVolumes = ref<string[]>([])
 const preHookCmd = ref('')
-const preHookOnFailure = ref('abort')
+const preHookOnFailure = ref<'abort' | 'continue'>('abort')
 const postHookCmd = ref('')
 const retentionEnabled = ref(false)
 const retention = ref({ keep_last: 5, keep_daily: 7, keep_weekly: 4, keep_monthly: 6, prune: true })
@@ -36,19 +35,19 @@ const volumeMounts = computed(() =>
 onMounted(async () => {
   try {
     storages.value = await api.storage.list()
-    if (storages.value.length > 0) storageId.value = storages.value[0].id
+    if (storages.value.length > 0) storageId.value = storages.value[0]!.id
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : String(e)
   }
 })
 
-function buildHook(cmd, onFailure) {
+function buildHook(cmd: string, onFailure: 'abort' | 'continue'): Hook | undefined {
   const trimmed = cmd.trim()
   if (!trimmed) return undefined
   return { command: ['sh', '-c', trimmed], on_failure: onFailure }
 }
 
-async function submit() {
+async function submit(): Promise<void> {
   if (!storageId.value) {
     error.value = 'Choisissez une destination de stockage.'
     return
@@ -56,7 +55,7 @@ async function submit() {
   error.value = ''
   submitting.value = true
   try {
-    const payload = {
+    const rec = await api.backups.start({
       container_id: props.container.id,
       storage_id: storageId.value,
       stop_container: stopContainer.value,
@@ -65,12 +64,11 @@ async function submit() {
       post_hook: buildHook(postHookCmd.value, 'continue'),
       retention: retentionEnabled.value ? retention.value : undefined,
       tags: tags.value ? tags.value.split(',').map((t) => t.trim()).filter(Boolean) : undefined,
-    }
-    const rec = await api.backups.start(payload)
+    })
     toasts.success(`Sauvegarde #${rec.id} lancée pour ${props.container.name}`)
     emit('close')
   } catch (e) {
-    error.value = e.message
+    error.value = e instanceof Error ? e.message : String(e)
   } finally {
     submitting.value = false
   }

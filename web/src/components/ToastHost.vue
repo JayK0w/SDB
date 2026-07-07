@@ -1,9 +1,9 @@
-<script setup>
+<script setup lang="ts">
 import { useToastsStore } from '@/stores/toasts'
 
 const toasts = useToastsStore()
 
-const KIND_CLASSES = {
+const KIND_CLASSES: Record<string, string> = {
   success: 'border-emerald-500/40 text-emerald-300',
   warning: 'border-amber-500/40 text-amber-300',
   error: 'border-red-500/40 text-red-300',

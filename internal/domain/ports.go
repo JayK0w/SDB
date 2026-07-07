@@ -40,6 +40,24 @@ type BackupHistoryRepository interface {
 	FailInterrupted(ctx context.Context, reason string) (int64, error)
 }
 
+type RestoreHistoryRepository interface {
+	Create(ctx context.Context, rec *RestoreRecord) error
+	Update(ctx context.Context, rec *RestoreRecord) error
+	GetByID(ctx context.Context, id int64) (*RestoreRecord, error)
+	List(ctx context.Context, filter RestoreFilter) ([]RestoreRecord, error)
+	FailInterrupted(ctx context.Context, reason string) (int64, error)
+}
+
+type ScheduleRepository interface {
+	Create(ctx context.Context, s *BackupSchedule) error
+	GetByID(ctx context.Context, id int64) (*BackupSchedule, error)
+	List(ctx context.Context) ([]BackupSchedule, error)
+	Update(ctx context.Context, s *BackupSchedule) error
+	Delete(ctx context.Context, id int64) error
+	// TouchLastRun records when the schedule last fired.
+	TouchLastRun(ctx context.Context, id int64, at time.Time) error
+}
+
 // ---------------------------------------------------------------------------
 // Container runtime port — implemented by internal/infra/docker.
 // ---------------------------------------------------------------------------
@@ -52,6 +70,10 @@ type WorkerSpec struct {
 	// Env carries RESTIC_* variables including secrets: implementations
 	// and callers must never log this field.
 	Env []string
+	// Files are written into the worker (0600) before it starts — used
+	// for secrets that must be files (SSH keys, GCS service accounts).
+	// Never log this field either.
+	Files map[string][]byte
 	// Mounts are attached to the worker; the runtime forces ReadOnly=true
 	// on every mount unless the spec explicitly allows writing (restores).
 	Mounts      []Mount
