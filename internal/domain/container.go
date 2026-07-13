@@ -2,8 +2,6 @@ package domain
 
 import "time"
 
-// ContainerState mirrors the Docker container lifecycle states SDB cares
-// about; other daemon states are carried through as-is.
 type ContainerState string
 
 const (
@@ -12,8 +10,6 @@ const (
 	ContainerExited  ContainerState = "exited"
 )
 
-// MountType restricts backups to mounts that map to real data: named
-// volumes and bind mounts. tmpfs and friends are excluded.
 type MountType string
 
 const (
@@ -21,29 +17,28 @@ const (
 	MountBind   MountType = "bind"
 )
 
-// Mount is a volume or bind mount attached to a container.
 type Mount struct {
 	Type        MountType
-	Name        string // volume name; empty for bind mounts
-	Source      string // host path (bind) or volume source
-	Destination string // path inside the container
+	Name        string // nom du volume, vide pour un bind
+	Source      string // chemin hôte
+	Destination string // chemin dans le conteneur
 	ReadOnly    bool
 }
 
-// Container is the projection of a Docker container used by SDB.
+// Container : projection d'un conteneur Docker utilisée par SDB.
 type Container struct {
 	ID      string
 	Name    string
 	Image   string
 	State   ContainerState
-	Labels  map[string]string
 	Mounts  []Mount
 	Created time.Time
 }
 
 func (c *Container) IsRunning() bool { return c.State == ContainerRunning }
 
-// BackupableMounts filters mounts down to those SDB can snapshot.
+// BackupableMounts : seuls volumes nommés et binds sont sauvegardables
+// (tmpfs exclus).
 func (c *Container) BackupableMounts() []Mount {
 	out := make([]Mount, 0, len(c.Mounts))
 	for _, m := range c.Mounts {

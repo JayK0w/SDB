@@ -10,8 +10,8 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// handleStartBackup accepts the run and returns 202 immediately; progress
-// streams over /ws/metrics and the final state lands in the history.
+// handleStartBackup : 202 immédiat, progression via /ws/metrics, état
+// final dans l'historique.
 func (s *Server) handleStartBackup(c *gin.Context) {
 	var req backupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {

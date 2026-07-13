@@ -63,8 +63,7 @@ func (s *Server) handleCreateUser(c *gin.Context) {
 	c.JSON(http.StatusCreated, toUserDTO(*user))
 }
 
-// handleUpdatePassword lets a user change their own password; admins can
-// change anyone's.
+// changement de mot de passe : soi-même, ou n'importe qui pour un admin
 func (s *Server) handleUpdatePassword(c *gin.Context) {
 	id, err := pathID(c)
 	if err != nil {

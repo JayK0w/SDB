@@ -30,7 +30,7 @@ func TestEnsureInitialAdminAndLogin(t *testing.T) {
 		t.Fatalf("Login(generated password) = %+v, %v", u, err)
 	}
 
-	// Second call must be a no-op once a user exists.
+	// second appel : no-op des lors qu un utilisateur existe
 	created, _, err = svc.EnsureInitialAdmin(ctx, "admin", "")
 	if err != nil || created {
 		t.Fatalf("second EnsureInitialAdmin() = %v, %v; want no-op", created, err)

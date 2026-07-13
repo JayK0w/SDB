@@ -5,14 +5,13 @@ import (
 	"time"
 )
 
-// BackupSchedule is a recurring backup definition. The target container is
-// referenced by name, not ID: containers are routinely recreated (compose
-// up, image updates) and keep their name while their ID changes. The name
-// is resolved to a live container each time the schedule fires.
+// BackupSchedule : sauvegarde récurrente. Le conteneur est référencé par
+// NOM (les IDs changent quand un conteneur est recréé) et résolu à chaque
+// déclenchement.
 type BackupSchedule struct {
 	ID      int64
 	Name    string
-	Cron    string // standard 5-field cron expression, evaluated in server time (UTC in the container)
+	Cron    string // expression cron 5 champs, heure serveur (UTC en conteneur)
 	Enabled bool
 
 	ContainerName string
@@ -29,8 +28,8 @@ type BackupSchedule struct {
 	UpdatedAt time.Time
 }
 
-// Validate checks everything except the cron expression, which requires a
-// parser and is validated by the scheduler usecase.
+// Validate : tout sauf l'expression cron (validée par le scheduler qui
+// possède le parseur).
 func (s *BackupSchedule) Validate() error {
 	if s.Name == "" {
 		return fmt.Errorf("%w: schedule name is required", ErrInvalidInput)
@@ -62,11 +61,10 @@ func (s *BackupSchedule) Validate() error {
 	return nil
 }
 
-// ToRequest builds the BackupRequest fired by the scheduler. Runs are
-// tagged with the schedule name so snapshots can be traced back to it.
+// ToRequest : requête tirée au déclenchement, taguée du nom de la planif.
 func (s *BackupSchedule) ToRequest() BackupRequest {
 	return BackupRequest{
-		ContainerID:   s.ContainerName, // docker inspect resolves names too
+		ContainerID:   s.ContainerName, // docker inspect résout aussi les noms
 		StorageID:     s.StorageID,
 		Volumes:       s.Volumes,
 		StopContainer: s.StopContainer,

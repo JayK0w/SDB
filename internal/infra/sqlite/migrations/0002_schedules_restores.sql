@@ -1,7 +1,6 @@
--- v0.2: recurring backup schedules, restore history, and additional
--- storage backends (b2, azure, gs). Storage type validation moves to the
--- domain layer, so the CHECK constraint is dropped via a table rebuild
--- (run with foreign_keys=OFF by the migration runner).
+-- v0.2 : planifications, historique des restaurations, nouveaux backends
+-- (b2, azure, gs). La validation du type passe au domaine : le CHECK est
+-- retiré via un rebuild de table (exécuté avec foreign_keys=OFF).
 
 CREATE TABLE storage_configs_new (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,8 +18,7 @@ INSERT INTO storage_configs_new
 DROP TABLE storage_configs;
 ALTER TABLE storage_configs_new RENAME TO storage_configs;
 
--- Hooks, retention, volumes and tags are stored as JSON documents: they
--- are opaque payloads round-tripped to the domain, never queried by field.
+-- hooks/retention/volumes/tags : documents JSON opaques
 CREATE TABLE backup_schedules (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     name           TEXT NOT NULL UNIQUE,

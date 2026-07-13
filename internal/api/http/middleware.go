@@ -22,7 +22,7 @@ func (s *Server) requestLogger() gin.HandlerFunc {
 		start := time.Now()
 		c.Next()
 		if strings.HasSuffix(c.FullPath(), "/ws/metrics") {
-			return // long-lived connection, duration is meaningless
+			return // connexion longue durée, durée sans intérêt
 		}
 		s.logger.Info("http request",
 			"method", c.Request.Method,
@@ -50,8 +50,8 @@ func (s *Server) authRequired() gin.HandlerFunc {
 	}
 }
 
-// staticTokenRequired guards an endpoint with a fixed bearer token,
-// compared in constant time (scrapers cannot refresh JWTs).
+// staticTokenRequired : token fixe comparé en temps constant (Prometheus
+// ne sait pas rafraîchir un JWT).
 func (s *Server) staticTokenRequired(token string) gin.HandlerFunc {
 	want := []byte(token)
 	return func(c *gin.Context) {
@@ -75,8 +75,8 @@ func (s *Server) adminRequired() gin.HandlerFunc {
 	}
 }
 
-// bearerToken reads the Authorization header, falling back to the token
-// query parameter: browsers cannot set headers on WebSocket dials.
+// bearerToken : header Authorization, sinon ?token= (les navigateurs ne
+// posent pas de headers sur un dial WebSocket).
 func bearerToken(c *gin.Context) string {
 	if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimPrefix(h, "Bearer ")
@@ -93,8 +93,8 @@ func currentClaims(c *gin.Context) *Claims {
 	return claims
 }
 
-// respondError maps domain sentinels onto HTTP statuses. Unclassified
-// errors become an opaque 500: the detail goes to the log, not the wire.
+// respondError : sentinelles domaine → codes HTTP ; erreur inconnue = 500
+// opaque, le détail part dans les logs, pas sur le réseau.
 func (s *Server) respondError(c *gin.Context, err error) {
 	status := http.StatusInternalServerError
 	switch {
@@ -127,8 +127,8 @@ func pathID(c *gin.Context) (int64, error) {
 	return id, nil
 }
 
-// rateLimiter is a fixed-window counter, enough to blunt online
-// password-guessing against the login endpoint.
+// rateLimiter : fenêtre fixe, suffisant contre le guessing de mots de
+// passe sur /auth/login.
 type rateLimiter struct {
 	mu       sync.Mutex
 	limit    int

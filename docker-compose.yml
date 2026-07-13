@@ -1,12 +1,12 @@
-# Hardened production deployment for SDB (spec §4).
+# Déploiement durci de SDB.
 #
-# Before the first start, generate the secrets:
+# Avant le premier démarrage, générer les secrets :
 #   mkdir -p secrets
 #   openssl rand -hex 32 > secrets/sdb_master_key
 #   openssl rand -hex 32 > secrets/sdb_jwt_secret
 #
-# Then:  docker compose up -d --build
-# First-login admin password: docker compose logs sdb | grep "initial admin"
+# Puis :  docker compose up -d --build
+# Mot de passe admin initial : docker compose logs sdb | grep "initial admin"
 
 services:
   sdb:
@@ -15,15 +15,14 @@ services:
     container_name: sdb
     restart: unless-stopped
 
-    # Loopback-only on the host: Docker port publishing bypasses
-    # iptables/UFW, so never bind 0.0.0.0 here. Put a reverse proxy with
-    # TLS in front for remote access.
+    # loopback-only côté hôte : la publication de port Docker contourne
+    # iptables/UFW — ne jamais binder 0.0.0.0 ici. Reverse proxy TLS
+    # devant pour un accès distant.
     ports:
       - "127.0.0.1:8080:8080"
 
-    # Immutable root filesystem, no privilege escalation, every Linux
-    # capability dropped: SDB needs none — it only talks to the Docker
-    # socket and writes its SQLite database under /data.
+    # rootfs immuable, pas d'escalade de privilèges, zéro capability :
+    # SDB n'a besoin de rien d'autre que le socket et /data
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -33,25 +32,24 @@ services:
       - /tmp
 
     volumes:
-      # Root-equivalent by design: SDB orchestrates containers. Keep this
-      # compose file on a trusted host only.
+      # accès root-équivalent assumé : SDB orchestre des conteneurs
       - /var/run/docker.sock:/var/run/docker.sock
-      # The only writable state: SQLite database and runtime data.
+      # seul état inscriptible : la base SQLite
       - sdb-data:/data
 
     environment:
-      # 0.0.0.0 inside the container is required for the port mapping to
-      # work; the loopback guarantee is the host-side binding above.
+      # 0.0.0.0 nécessaire DANS le conteneur pour le mapping de port ;
+      # la garantie loopback est le binding hôte ci-dessus
       SDB_LISTEN_HOST: "0.0.0.0"
       SDB_DATA_DIR: /data
       SDB_MASTER_KEY_FILE: /run/secrets/sdb_master_key
       SDB_JWT_SECRET_FILE: /run/secrets/sdb_jwt_secret
       SDB_LOG_LEVEL: info
       SDB_LOG_FORMAT: json
-      # Weekly repository integrity checks; set to 0 to disable.
+      # vérifications d'intégrité hebdomadaires ; 0 pour désactiver
       SDB_CHECK_INTERVAL: 168h
-      # Prometheus /metrics (disabled when empty); export the variable or
-      # put it in a .env file next to this compose file.
+      # /metrics Prometheus (désactivé si vide) ; exporter la variable ou
+      # la mettre dans un fichier .env à côté de ce compose
       SDB_METRICS_TOKEN: ${SDB_METRICS_TOKEN:-}
 
     secrets:

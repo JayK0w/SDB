@@ -1,9 +1,5 @@
-// Package config loads and validates the SDB runtime configuration.
-//
-// Configuration is environment-first (12-factor): every value is set
-// through an SDB_* variable, which suits a hardened container deployment.
-// Secrets additionally support the *_FILE convention so they can be
-// mounted as Docker secrets instead of appearing in the environment.
+// Package config : configuration 12-factor via variables SDB_*.
+// Les secrets acceptent la convention *_FILE (secrets Docker).
 package config
 
 import (
@@ -34,9 +30,8 @@ type Server struct {
 
 func (s Server) Addr() string { return net.JoinHostPort(s.Host, strconv.Itoa(s.Port)) }
 
-// IsLoopback reports whether the listen address is loopback-only. Binding
-// wider than loopback is allowed (needed inside a container) but the
-// caller should warn, because Docker port publishing bypasses UFW/iptables.
+// IsLoopback : sert à avertir si l'écoute dépasse le loopback
+// (la publication de port Docker contourne UFW/iptables).
 func (s Server) IsLoopback() bool {
 	if s.Host == "localhost" {
 		return true
@@ -50,40 +45,28 @@ type Database struct {
 }
 
 type Docker struct {
-	// Host is the daemon endpoint; empty means the SDK default (local
-	// unix socket / npipe).
-	Host        string
+	Host        string // vide = socket local
 	TLSVerify   bool
 	TLSCACert   string
 	TLSCert     string
 	TLSKey      string
-	WorkerImage string
-	// StopTimeout is how long a container gets to stop gracefully before
-	// the daemon kills it (cold backups, hooks that stop services).
-	StopTimeout time.Duration
+	WorkerImage string        // image restic des workers éphémères
+	StopTimeout time.Duration // délai de grâce avant kill
 }
 
 type Auth struct {
-	// JWTSecret signs API access tokens.
 	JWTSecret string
 	TokenTTL  time.Duration
-	// MasterKey encrypts storage credentials and Restic passwords at rest
-	// (AES-256-GCM). Losing it makes stored storage configs unreadable.
-	MasterKey string
-	// AdminUsername/AdminPassword seed the first admin account when the
-	// user table is empty. Without a password, a random one is generated
-	// and printed once in the logs.
+	// MasterKey : chiffre les secrets de stockage au repos. La perdre rend
+	// les configurations de stockage illisibles.
+	MasterKey     string
 	AdminUsername string
-	AdminPassword string
-	// MetricsToken protects GET /metrics with a static bearer token
-	// (Prometheus-friendly). Empty disables the endpoint entirely.
-	MetricsToken string
+	AdminPassword string // vide = généré et affiché une fois dans les logs
+	MetricsToken  string // vide = endpoint /metrics désactivé
 }
 
 type Maintenance struct {
-	// CheckInterval is the pause between scheduled repository integrity
-	// checks (restic check); 0 disables them.
-	CheckInterval time.Duration
+	CheckInterval time.Duration // 0 = vérifications d'intégrité désactivées
 }
 
 type Log struct {
@@ -192,8 +175,7 @@ func (c *Config) Validate() error {
 	if c.Maintenance.CheckInterval < 0 {
 		errs = append(errs, errors.New("SDB_CHECK_INTERVAL must be zero (disabled) or a positive duration"))
 	}
-	// Plaintext TCP to the Docker daemon is root-equivalent remote access:
-	// refuse it outright instead of warning.
+	// tcp:// vers le démon Docker = accès root distant : refusé sans mTLS complet
 	if strings.HasPrefix(c.Docker.Host, "tcp://") {
 		if !c.Docker.TLSVerify || c.Docker.TLSCACert == "" || c.Docker.TLSCert == "" || c.Docker.TLSKey == "" {
 			errs = append(errs, errors.New("SDB_DOCKER_HOST uses tcp:// — unencrypted TCP is forbidden; set SDB_DOCKER_TLS_VERIFY=true and provide SDB_DOCKER_TLS_CA, SDB_DOCKER_TLS_CERT and SDB_DOCKER_TLS_KEY (mTLS)"))
@@ -256,7 +238,7 @@ func getenvDuration(key string, def time.Duration) (time.Duration, error) {
 	return d, nil
 }
 
-// getSecret resolves KEY_FILE first (Docker secrets), then KEY.
+// getSecret : KEY_FILE (secret Docker) prioritaire sur KEY.
 func getSecret(key string) (string, error) {
 	if path := os.Getenv(key + "_FILE"); path != "" {
 		b, err := os.ReadFile(path)

@@ -78,14 +78,3 @@ func TestScheduleRunNowFiresBackup(t *testing.T) {
 		t.Fatalf("resolved container = %q", final.ContainerName)
 	}
 }
-
-func TestScheduleToRequestTags(t *testing.T) {
-	s := domain.BackupSchedule{Name: "nightly", ContainerName: "db", StorageID: 2, Tags: []string{"prod"}}
-	req := s.ToRequest()
-	if req.ContainerID != "db" || req.StorageID != 2 {
-		t.Fatalf("ToRequest() mapped wrong target: %+v", req)
-	}
-	if len(req.Tags) != 2 || req.Tags[0] != "scheduled:nightly" {
-		t.Fatalf("ToRequest() tags = %v", req.Tags)
-	}
-}

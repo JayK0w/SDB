@@ -11,14 +11,11 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// cipherVersion prefixes every ciphertext so the format can evolve
-// (algorithm change, KDF change) without breaking stored secrets.
+// octet de version en préfixe : permet de changer d'algo sans casser l'existant
 const cipherVersion byte = 1
 
-// AESGCM implements domain.Cipher with AES-256-GCM. The 256-bit key is
-// derived from the master key material with SHA-256; the configuration
-// layer enforces a high-entropy master key (>= 32 characters), so a
-// memory-hard KDF is not needed here.
+// AESGCM : chiffrement des secrets au repos. Clé 256 bits dérivée de la
+// clé maître par SHA-256 (la config impose ≥ 32 caractères d'entropie).
 type AESGCM struct {
 	aead cipher.AEAD
 }
@@ -41,9 +38,7 @@ func NewAESGCM(masterKey string) (*AESGCM, error) {
 	return &AESGCM{aead: aead}, nil
 }
 
-// Encrypt returns version || nonce || sealed. A fresh random nonce is
-// drawn per call; GCM authenticates the ciphertext, so any tampering is
-// detected at decryption time.
+// Encrypt : version || nonce aléatoire || données scellées (GCM authentifie).
 func (c *AESGCM) Encrypt(plaintext []byte) ([]byte, error) {
 	nonce := make([]byte, c.aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
@@ -66,8 +61,8 @@ func (c *AESGCM) Decrypt(ciphertext []byte) ([]byte, error) {
 	data := ciphertext[1+c.aead.NonceSize():]
 	plaintext, err := c.aead.Open(nil, nonce, data, nil)
 	if err != nil {
-		// Deliberately generic: do not leak whether the key or the data
-		// is at fault.
+		// message volontairement générique : ne révèle pas si la clé ou
+		// la donnée est en cause
 		return nil, errors.New("decryption failed: wrong master key or corrupted data")
 	}
 	return plaintext, nil

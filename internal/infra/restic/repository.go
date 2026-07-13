@@ -1,8 +1,7 @@
-// Package restic implements domain.SnapshotEngine by driving the restic
-// binary inside ephemeral worker containers: the target volumes are
-// attached read-only to the worker, so the SDB process itself never
-// touches the data. The worker image must have restic as its entrypoint
-// (e.g. the official restic/restic image).
+// Package restic : implémente SnapshotEngine en pilotant le binaire restic
+// dans des workers éphémères — les volumes cibles y sont montés en lecture
+// seule, le processus SDB ne touche jamais les données. L'image worker
+// doit avoir restic comme entrypoint (restic/restic officielle).
 package restic
 
 import (
@@ -14,18 +13,15 @@ import (
 )
 
 const (
-	// repoMountPath is where a local repository is mounted inside workers.
-	repoMountPath = "/sdb/repo"
-	// dataMountRoot prefixes every backed-up mount inside workers; restores
-	// reuse the same layout so snapshots restore in place.
-	dataMountRoot = "/sdb/data"
+	repoMountPath = "/sdb/repo" // dépôt local monté ici dans le worker
+	dataMountRoot = "/sdb/data" // préfixe des montages sauvegardés (backup ET restore)
 )
 
-// Pseudo-credential keys turned into files inside the worker instead of
-// environment variables, because their consumers expect files.
+// pseudo-credentials transformés en fichiers dans le worker (leurs
+// consommateurs attendent des fichiers, pas des variables)
 const (
-	credSSHKey     = "SSH_PRIVATE_KEY"         // sftp: private key for the ssh client
-	credGoogleJSON = "GOOGLE_CREDENTIALS_JSON" // gs: service account JSON document
+	credSSHKey     = "SSH_PRIVATE_KEY"
+	credGoogleJSON = "GOOGLE_CREDENTIALS_JSON"
 )
 
 const (
@@ -33,12 +29,12 @@ const (
 	gcsJSONPath = "/sdb/secrets/gcs.json"
 )
 
-// repoContext is everything needed to point a worker at a repository.
+// repoContext : tout ce qu'il faut pour pointer un worker vers un dépôt.
 type repoContext struct {
 	env     []string
 	mounts  []domain.Mount
 	files   map[string][]byte
-	opts    []string // extra restic CLI flags (e.g. -o sftp.command=...)
+	opts    []string // flags restic additionnels (-o sftp.command=...)
 	network string
 }
 
@@ -56,7 +52,7 @@ func repositoryFor(storage *domain.StorageConfig) (*repoContext, error) {
 			Destination: repoMountPath,
 			ReadOnly:    false,
 		})
-		// A local backup needs no network at all: isolate the worker.
+		// sauvegarde locale = aucun réseau nécessaire : worker isolé
 		rc.network = "none"
 	case domain.StorageS3:
 		rc.env = append(rc.env, "RESTIC_REPOSITORY="+ensureScheme(storage.Endpoint, "s3:"))
@@ -97,16 +93,15 @@ func repositoryFor(storage *domain.StorageConfig) (*repoContext, error) {
 	return rc, nil
 }
 
-// configureSFTP wires the ssh command restic spawns for sftp: backends.
-// The private key comes from the SSH_PRIVATE_KEY credential; host keys are
-// pinned on first use (accept-new) inside the ephemeral worker.
+// configureSFTP : construit la commande ssh que restic lance pour sftp:.
+// Clé privée via SSH_PRIVATE_KEY, host key épinglée au premier usage.
 func configureSFTP(rc *repoContext, storage *domain.StorageConfig) error {
 	if storage.Credentials[credSSHKey] == "" {
 		return fmt.Errorf("%w: sftp storage requires the %s credential", domain.ErrInvalidInput, credSSHKey)
 	}
 	target := strings.TrimPrefix(storage.Endpoint, "sftp:")
 	target = strings.TrimPrefix(target, "//")
-	// "user@host:/path" -> "user@host"
+	// "user@host:/chemin" -> "user@host"
 	if i := strings.Index(target, ":"); i >= 0 {
 		target = target[:i]
 	}
@@ -128,8 +123,8 @@ func ensureScheme(endpoint, scheme string) string {
 	return scheme + endpoint
 }
 
-// mountName produces a stable, filesystem-safe identifier for a mount:
-// the volume name when there is one, otherwise a sanitized path.
+// mountName : identifiant stable et sûr pour un montage (nom du volume,
+// sinon chemin nettoyé).
 func mountName(m domain.Mount) string {
 	name := m.Name
 	if name == "" {
@@ -155,9 +150,9 @@ func mountName(m domain.Mount) string {
 	return out
 }
 
-// dataMounts maps the source container's mounts into the worker under
-// /sdb/data/<name>, read-only. It returns the worker mounts and the paths
-// restic must back up.
+// dataMounts : projette les montages du conteneur source dans le worker
+// sous /sdb/data/<nom>, en lecture seule. Retourne aussi les chemins que
+// restic doit sauvegarder.
 func dataMounts(mounts []domain.Mount) ([]domain.Mount, []string, error) {
 	if len(mounts) == 0 {
 		return nil, nil, fmt.Errorf("%w: no mounts to back up", domain.ErrInvalidInput)

@@ -11,9 +11,8 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// StorageRepo persists storage configurations. Credentials and the Restic
-// repository password go through the domain.Cipher (AES-256-GCM) on every
-// write and read; the plaintext never reaches the database file.
+// StorageRepo : les credentials et le mot de passe restic passent par le
+// Cipher à chaque lecture/écriture — jamais de clair dans le fichier .db.
 type StorageRepo struct {
 	db     *sql.DB
 	cipher domain.Cipher
@@ -133,6 +132,7 @@ func (r *StorageRepo) Update(ctx context.Context, cfg *domain.StorageConfig) err
 
 func (r *StorageRepo) Delete(ctx context.Context, id int64) error {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM storage_configs WHERE id = ?`, id)
+	// FK RESTRICT : refuse si l'historique référence encore ce stockage
 	if isForeignKeyViolation(err) {
 		return fmt.Errorf("%w: storage %d is referenced by backup history", domain.ErrConflict, id)
 	}

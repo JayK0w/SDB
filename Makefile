@@ -6,9 +6,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 all: build
 
-# CGO is kept off on purpose: the SQLite driver used in phase 2 is pure Go
-# (modernc.org/sqlite), which allows fully static binaries for the
-# read-only scratch container image.
+# CGO off : driver SQLite pur Go (modernc) → binaire statique
 build:
 	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o bin/$(BINARY) ./cmd/sdb
 

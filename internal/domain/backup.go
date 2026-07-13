@@ -5,19 +5,18 @@ import (
 	"time"
 )
 
-// BackupStatus is the lifecycle of a backup or restore run.
+// BackupStatus : cycle de vie commun aux sauvegardes et restaurations.
 type BackupStatus string
 
 const (
 	BackupPending  BackupStatus = "pending"
 	BackupRunning  BackupStatus = "running"
 	BackupSuccess  BackupStatus = "success"
-	BackupWarning  BackupStatus = "warning" // finished, but a non-fatal step failed (e.g. post-hook)
+	BackupWarning  BackupStatus = "warning" // terminé avec incidents non fatals
 	BackupFailed   BackupStatus = "failed"
 	BackupCanceled BackupStatus = "canceled"
 )
 
-// Terminal reports whether the run reached a final state.
 func (s BackupStatus) Terminal() bool {
 	switch s {
 	case BackupSuccess, BackupWarning, BackupFailed, BackupCanceled:
@@ -26,8 +25,7 @@ func (s BackupStatus) Terminal() bool {
 	return false
 }
 
-// BackupRecord is one row of backups_history: a single backup attempt of
-// one container towards one storage backend.
+// BackupRecord : une ligne de backups_history.
 type BackupRecord struct {
 	ID             int64
 	ContainerID    string
@@ -41,31 +39,16 @@ type BackupRecord struct {
 	ErrorLog       string
 }
 
-func (r *BackupRecord) Duration() time.Duration {
-	if r.EndTime == nil {
-		return 0
-	}
-	return r.EndTime.Sub(r.StartTime)
-}
-
-// BackupRequest carries everything a backup run needs. It is built by the
-// API layer from user input and consumed by the backup usecase.
+// BackupRequest : tout ce qu'un run de sauvegarde requiert.
 type BackupRequest struct {
-	ContainerID string
-	StorageID   int64
-	// Volumes restricts the run to these volume names; empty means every
-	// backupable mount of the container.
-	Volumes []string
-	// StopContainer stops the container for the duration of the snapshot
-	// (cold backup). The container is restarted afterwards no matter how
-	// the run ends.
-	StopContainer bool
+	ContainerID   string
+	StorageID     int64
+	Volumes       []string // sous-ensemble ; vide = tous les montages sauvegardables
+	StopContainer bool     // sauvegarde à froid, redémarrage garanti ensuite
 	PreHook       *Hook
 	PostHook      *Hook
-	// Retention, when set, applies restic forget (and optionally --prune)
-	// after a successful backup.
-	Retention *RetentionPolicy
-	Tags      []string
+	Retention     *RetentionPolicy // forget --prune après succès
+	Tags          []string
 }
 
 func (r *BackupRequest) Validate() error {
@@ -93,7 +76,7 @@ func (r *BackupRequest) Validate() error {
 	return nil
 }
 
-// Snapshot mirrors the metadata Restic reports for a stored snapshot.
+// Snapshot : métadonnées d'un snapshot restic.
 type Snapshot struct {
 	ID       string
 	ShortID  string
@@ -103,8 +86,7 @@ type Snapshot struct {
 	Tags     []string
 }
 
-// BackupSummary is the final result reported by the snapshot engine,
-// parsed from Restic's JSON summary message.
+// BackupSummary : résultat final parsé du message summary de restic.
 type BackupSummary struct {
 	SnapshotID      string
 	FilesNew        int64
@@ -115,7 +97,7 @@ type BackupSummary struct {
 	Duration        time.Duration
 }
 
-// HistoryFilter narrows backups_history queries; zero values mean "any".
+// HistoryFilter : filtre de backups_history, zéro = ignoré.
 type HistoryFilter struct {
 	ContainerID string
 	StorageID   int64

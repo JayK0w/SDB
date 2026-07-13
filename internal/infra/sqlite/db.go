@@ -1,5 +1,5 @@
-// Package sqlite implements the persistence ports over SQLite using the
-// pure-Go driver modernc.org/sqlite (no CGO, static binaries).
+// Package sqlite : persistance via modernc.org/sqlite (pur Go, sans CGO,
+// donc binaire statique).
 package sqlite
 
 import (
@@ -20,8 +20,8 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// Open opens (creating if needed) the SQLite database with WAL mode,
-// foreign keys enforced and a busy timeout.
+// Open : ouvre (crée si besoin) la base en mode WAL, clés étrangères
+// actives, busy_timeout contre les SQLITE_BUSY.
 func Open(path string) (*sql.DB, error) {
 	if dir := filepath.Dir(path); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -37,8 +37,7 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	// SQLite allows a single writer; a small pool plus busy_timeout keeps
-	// readers concurrent without SQLITE_BUSY surprises.
+	// SQLite = un seul écrivain : petit pool + busy_timeout suffisent
 	db.SetMaxOpenConns(4)
 	if err := db.Ping(); err != nil {
 		db.Close()
@@ -47,14 +46,11 @@ func Open(path string) (*sql.DB, error) {
 	return db, nil
 }
 
-// Migrate applies the embedded migrations in filename order. Each file is
-// named NNNN_description.sql and runs exactly once, inside a transaction,
-// tracked in schema_migrations.
-//
-// Migrations run on a dedicated connection with foreign keys disabled:
-// SQLite table rebuilds (the only way to change constraints) require it,
-// and the pragma cannot be toggled inside a transaction. Integrity is
-// re-checked with foreign_key_check after every migration.
+// Migrate : applique les migrations embarquées (NNNN_description.sql) dans
+// l'ordre, une seule fois chacune, suivies dans schema_migrations.
+// Connexion dédiée avec FK désactivées : les rebuilds de table l'exigent
+// et le pragma ne se change pas dans une transaction. L'intégrité est
+// revérifiée avant chaque commit.
 func Migrate(ctx context.Context, db *sql.DB) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -131,7 +127,7 @@ func applyMigration(ctx context.Context, conn *sql.Conn, name string, version in
 		tx.Rollback()
 		return fmt.Errorf("recording migration %s: %w", name, err)
 	}
-	// Verify referential integrity before making the migration permanent.
+	// contrôle d'intégrité référentielle avant de rendre la migration définitive
 	var table string
 	err = tx.QueryRowContext(ctx, `SELECT "table" FROM pragma_foreign_key_check LIMIT 1`).Scan(&table)
 	switch {

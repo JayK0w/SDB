@@ -1,3 +1,5 @@
+// Point d'entrée : charge la config, construit chaque couche
+// (infra → usecases → API) et gère l'arrêt gracieux.
 package main
 
 import (
@@ -12,15 +14,15 @@ import (
 	httpapi "github.com/standalone-docker-backup/sdb/internal/api/http"
 	"github.com/standalone-docker-backup/sdb/internal/config"
 	"github.com/standalone-docker-backup/sdb/internal/infra/crypto"
-	"github.com/standalone-docker-backup/sdb/internal/metrics"
 	"github.com/standalone-docker-backup/sdb/internal/infra/docker"
 	"github.com/standalone-docker-backup/sdb/internal/infra/restic"
 	"github.com/standalone-docker-backup/sdb/internal/infra/sqlite"
+	"github.com/standalone-docker-backup/sdb/internal/metrics"
 	"github.com/standalone-docker-backup/sdb/internal/usecase"
 	"github.com/standalone-docker-backup/sdb/web"
 )
 
-// version is injected at build time (see Makefile LDFLAGS).
+// injecté au build (-ldflags)
 var version = "dev"
 
 func main() {
@@ -39,6 +41,7 @@ func run() error {
 	logger := newLogger(cfg.Log)
 	slog.SetDefault(logger)
 
+	// SIGINT/SIGTERM annulent ce contexte → arrêt gracieux
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -49,6 +52,7 @@ func run() error {
 			"host", cfg.Server.Host)
 	}
 
+	// --- Infra ---
 	cipher, err := crypto.NewAESGCM(cfg.Auth.MasterKey)
 	if err != nil {
 		return fmt.Errorf("initialising secret cipher: %w", err)
@@ -65,8 +69,7 @@ func run() error {
 	}
 	logger.Info("database ready", "path", cfg.Database.Path)
 
-	// Runs left pending/running by a crash or restart can never finish:
-	// mark them failed before accepting new work.
+	// nettoyage des runs interrompus par un crash/redémarrage
 	history := sqlite.NewHistoryRepo(db)
 	if n, err := history.FailInterrupted(ctx, "interrupted by SDB restart"); err != nil {
 		return fmt.Errorf("cleaning interrupted runs: %w", err)
@@ -104,6 +107,7 @@ func run() error {
 	storageRepo := sqlite.NewStorageRepo(db, cipher)
 	engine := restic.New(runtime, cfg.Docker.WorkerImage)
 
+	// --- Usecases ---
 	authSvc := usecase.NewAuthService(userRepo, hasher, logger)
 	created, generated, err := authSvc.EnsureInitialAdmin(ctx, cfg.Auth.AdminUsername, cfg.Auth.AdminPassword)
 	if err != nil {
@@ -123,8 +127,7 @@ func run() error {
 		go maintenance.Schedule(ctx, cfg.Maintenance.CheckInterval)
 	}
 
-	// Every long-running usecase publishes to the hub (live WebSocket
-	// stream) and to the Prometheus collector through one fan-out.
+	// hub (WebSocket) + collecteur Prometheus alimentés par le même flux
 	hub := httpapi.NewHub(logger)
 	go hub.Run(ctx)
 	collector := metrics.New(version)
@@ -139,6 +142,7 @@ func run() error {
 		}
 	}()
 
+	// --- API HTTP + frontend embarqué ---
 	staticFS, err := web.Dist()
 	if err != nil {
 		logger.Warn("embedded frontend unavailable, serving API only (build it with `make web-build`)", "error", err)
@@ -165,10 +169,9 @@ func run() error {
 	}, hub, logger)
 
 	logger.Info("HTTP API listening", "addr", cfg.Server.Addr())
-	serverErr := server.Run(ctx) // blocks until shutdown signal or listen failure
+	serverErr := server.Run(ctx) // bloque jusqu'au signal d'arrêt
 
-	// Drain running jobs: cancel them and wait for their rollback paths
-	// (container restarts) to complete before releasing the process.
+	// drain : annule les jobs et attend leurs rollbacks (redémarrages)
 	closeCtx, cancelClose := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancelClose()
 	if err := backupSvc.Close(closeCtx); err != nil {

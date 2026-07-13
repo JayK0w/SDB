@@ -100,10 +100,6 @@ func (r *UserRepo) Count(ctx context.Context) (int64, error) {
 	return n, err
 }
 
-type rowScanner interface {
-	Scan(dest ...any) error
-}
-
 func scanUser(row rowScanner) (*domain.User, error) {
 	var u domain.User
 	var role, createdAt, updatedAt string
@@ -118,15 +114,4 @@ func scanUser(row rowScanner) (*domain.User, error) {
 	u.CreatedAt = parseTime(createdAt)
 	u.UpdatedAt = parseTime(updatedAt)
 	return &u, nil
-}
-
-func requireAffected(res sql.Result, sentinel error) error {
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return sentinel
-	}
-	return nil
 }

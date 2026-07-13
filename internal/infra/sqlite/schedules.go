@@ -22,7 +22,8 @@ func NewScheduleRepo(db *sql.DB) *ScheduleRepo { return &ScheduleRepo{db: db} }
 const scheduleColumns = `id, name, cron, enabled, container_name, storage_id, volumes, stop_container,
 	pre_hook, post_hook, retention, tags, last_run_at, created_at, updated_at`
 
-// Hooks, retention, volumes and tags travel as JSON documents.
+// hooks/rétention/volumes/tags stockés en JSON : payloads opaques,
+// jamais requêtés champ par champ
 
 func marshalJSON(v any) (string, error) {
 	b, err := json.Marshal(v)

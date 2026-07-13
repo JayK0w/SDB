@@ -18,8 +18,8 @@ interface TypeInfo {
   credentials: { key: string; secret: boolean }[]
 }
 
-// Each backend suggests the credential keys restic expects; values are
-// encrypted at rest by the backend (AES-256-GCM).
+// chaque backend suggere ses cles d identifiants ; valeurs chiffrees
+// au repos (AES-256-GCM) cote backend
 const TYPES: TypeInfo[] = [
   {
     value: 'local',

@@ -1,3 +1,5 @@
+// Package usecase : règles métier. Orchestre les ports du domaine sans
+// jamais importer Gin, SQLite, Docker ni restic.
 package usecase
 
 import (
@@ -12,17 +14,11 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// BackupService orchestrates the full backup pipeline:
-//
-//	pre-hook -> optional container stop -> ephemeral restic worker
-//	(volumes read-only) -> container restart -> post-hook -> retention
-//
-// Start returns as soon as the run is accepted (HTTP 202 semantics); the
-// pipeline executes in a goroutine tied to its own cancellable context.
-// Progress reaches the frontend through the EventPublisher and every state
-// change is persisted to backups_history. Whatever goes wrong, a container
-// stopped by SDB is restarted (rollback), on a context that survives
-// cancellation.
+// BackupService : pipeline complet d'une sauvegarde —
+// pre-hook → arrêt optionnel → worker restic (volumes ro) → redémarrage
+// garanti → post-hook → rétention.
+// Start rend la main immédiatement (sémantique HTTP 202) ; le run tourne
+// dans une goroutine au contexte détaché mais annulable.
 type BackupService struct {
 	containers domain.ContainerRuntime
 	engine     domain.SnapshotEngine
@@ -32,7 +28,7 @@ type BackupService struct {
 	logger     *slog.Logger
 
 	mu      sync.Mutex
-	running map[string]*job // keyed by container ID: one run per container
+	running map[string]*job // clé = ID conteneur : un seul run à la fois
 	wg      sync.WaitGroup
 }
 
@@ -63,9 +59,8 @@ func NewBackupService(
 	}
 }
 
-// Start validates the request, records a pending run and launches the
-// pipeline asynchronously. It rejects a second run for a container that
-// already has one in flight (ErrConflict).
+// Start : valide, enregistre un run pending, lance le pipeline en async.
+// ErrConflict si un run est déjà en cours sur ce conteneur.
 func (s *BackupService) Start(ctx context.Context, req domain.BackupRequest) (*domain.BackupRecord, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -100,8 +95,7 @@ func (s *BackupService) Start(ctx context.Context, req domain.BackupRequest) (*d
 		s.mu.Unlock()
 		return nil, fmt.Errorf("recording backup run: %w", err)
 	}
-	// The job context is detached from the (short-lived) request context
-	// but individually cancellable through Cancel and Close.
+	// contexte détaché de la requête HTTP mais annulable via Cancel/Close
 	jobCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	s.running[target.ID] = &job{backupID: rec.ID, cancel: cancel}
 	s.mu.Unlock()
@@ -120,7 +114,6 @@ func (s *BackupService) Start(ctx context.Context, req domain.BackupRequest) (*d
 	return rec, nil
 }
 
-// Cancel aborts a running backup by its record ID.
 func (s *BackupService) Cancel(backupID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -133,8 +126,7 @@ func (s *BackupService) Cancel(backupID int64) error {
 	return fmt.Errorf("%w: no running backup with id %d", domain.ErrNotFound, backupID)
 }
 
-// Close cancels every running job and waits for their rollback paths to
-// complete, bounded by ctx.
+// Close : annule tous les jobs et attend leurs rollbacks, borné par ctx.
 func (s *BackupService) Close(ctx context.Context) error {
 	s.mu.Lock()
 	for _, j := range s.running {
@@ -172,8 +164,8 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 
 	var warnings []string
 
-	// 1. Pre-hook. Default policy: abort — snapshotting inconsistent data
-	// is worse than not snapshotting at all.
+	// 1. pre-hook — défaut abort : sauvegarder de l'incohérent est pire
+	// que ne pas sauvegarder
 	if req.PreHook != nil {
 		warn, err := s.runHook(ctx, target.ID, req.PreHook, domain.HookAbort, "pre-hook", rec.ID)
 		if err != nil {
@@ -185,7 +177,7 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 		}
 	}
 
-	// 2. Cold backup: stop the target for the duration of the snapshot.
+	// 2. arrêt pour sauvegarde à froid
 	stoppedByUs := false
 	if req.StopContainer && target.IsRunning() {
 		if err := s.containers.Stop(ctx, target.ID, 0); err != nil {
@@ -196,7 +188,7 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 		s.event(rec.ID, domain.EventLog, "container stopped for cold backup")
 	}
 
-	// 3. Snapshot through the ephemeral worker.
+	// 3. snapshot via le worker éphémère
 	summary, backupErr := s.snapshot(ctx, rec, storage, target, mounts, req.Tags)
 	if errors.Is(backupErr, domain.ErrPartial) {
 		warnings = append(warnings, backupErr.Error())
@@ -207,9 +199,8 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 		rec.BytesProcessed = summary.BytesProcessed
 	}
 
-	// 4. Rollback / restart. Whatever happened above — engine failure,
-	// cancellation — the target container must come back up, so this runs
-	// on a context that survives cancellation.
+	// 4. rollback : quoi qu'il soit arrivé, le conteneur repart — sur un
+	// contexte qui survit à l'annulation
 	var restartErr error
 	if stoppedByUs {
 		restartCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
@@ -225,9 +216,8 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 		}
 	}
 
-	// 5. Post-hook. Cleanup should run even after a failed snapshot, as
-	// long as the container is up. Default policy: continue — a cleanup
-	// failure must not void a good snapshot.
+	// 5. post-hook — défaut continue : un nettoyage raté n'invalide pas un
+	// bon snapshot ; tourne même après échec tant que le conteneur est up
 	if req.PostHook != nil && restartErr == nil {
 		warn, err := s.runHook(ctx, target.ID, req.PostHook, domain.HookContinue, "post-hook", rec.ID)
 		if err != nil {
@@ -237,8 +227,7 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 		}
 	}
 
-	// 6. Retention, only after a successful snapshot. A retention failure
-	// does not invalidate the backup itself: warning, not failure.
+	// 6. rétention après succès seulement ; son échec = warning, pas échec
 	if backupErr == nil && req.Retention != nil {
 		if err := s.engine.Forget(ctx, storage, *req.Retention); err != nil {
 			msg := "retention failed: " + err.Error()
@@ -250,9 +239,9 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 	s.finish(ctx, rec, backupErr, warnings, log)
 }
 
-// snapshot ensures the repository exists and runs the backup, forwarding
-// engine events to the publisher. Closing the events channel after Backup
-// returns is safe because RunWorker guarantees no writes after return.
+// snapshot : EnsureRepository + Backup, événements relayés au publisher.
+// Fermer events après le retour est sûr : RunWorker garantit qu'aucune
+// écriture ne survient ensuite.
 func (s *BackupService) snapshot(ctx context.Context, rec *domain.BackupRecord, storage *domain.StorageConfig,
 	target *domain.Container, mounts []domain.Mount, extraTags []string) (*domain.BackupSummary, error) {
 
@@ -276,9 +265,7 @@ func (s *BackupService) snapshot(ctx context.Context, rec *domain.BackupRecord, 
 	return summary, err
 }
 
-// runHook executes a hook inside the target container. On failure it
-// either returns a fatal error (abort policy) or a warning message
-// (continue policy).
+// runHook : erreur fatale (politique abort) ou message d'avertissement.
 func (s *BackupService) runHook(ctx context.Context, containerID string, hook *domain.Hook,
 	def domain.HookFailurePolicy, name string, backupID int64) (warning string, fatal error) {
 
@@ -325,8 +312,8 @@ func (s *BackupService) event(backupID int64, typ domain.EventType, msg string) 
 	})
 }
 
-// finish classifies the outcome, persists the terminal record (on a
-// context that survives cancellation) and publishes the final status.
+// finish : classe le résultat, persiste l'état terminal (contexte
+// insensible à l'annulation) et publie le statut final.
 func (s *BackupService) finish(ctx context.Context, rec *domain.BackupRecord, err error, warnings []string, log *slog.Logger) {
 	now := time.Now().UTC()
 	rec.EndTime = &now
@@ -376,8 +363,8 @@ func (s *BackupService) finish(ctx context.Context, rec *domain.BackupRecord, er
 	}
 }
 
-// selectMounts resolves the mounts to snapshot: the requested volume
-// names, or every backupable mount when no filter is given.
+// selectMounts : sous-ensemble demandé, sinon tous les montages
+// sauvegardables.
 func selectMounts(c *domain.Container, volumes []string) ([]domain.Mount, error) {
 	backupable := c.BackupableMounts()
 	if len(volumes) == 0 {

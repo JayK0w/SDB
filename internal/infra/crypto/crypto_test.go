@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const testMasterKey = "0123456789abcdef0123456789abcdef" // 32 chars
+const testMasterKey = "0123456789abcdef0123456789abcdef" // 32 caractères
 
 func TestArgon2idRoundTrip(t *testing.T) {
 	h := NewArgon2idHasher()

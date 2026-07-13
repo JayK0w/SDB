@@ -5,25 +5,17 @@ import (
 	"time"
 )
 
-// HookFailurePolicy decides what happens to the backup run when a hook fails.
 type HookFailurePolicy string
 
 const (
-	// HookAbort fails the backup if the hook fails. Sensible default for
-	// pre-hooks: snapshotting inconsistent data is worse than not
-	// snapshotting at all.
-	HookAbort HookFailurePolicy = "abort"
-	// HookContinue records the failure but lets the run proceed; the run
-	// then finishes in BackupWarning instead of BackupSuccess.
-	HookContinue HookFailurePolicy = "continue"
+	HookAbort    HookFailurePolicy = "abort"    // échec du hook = échec du run
+	HookContinue HookFailurePolicy = "continue" // échec toléré → warning
 )
 
-// DefaultHookTimeout bounds hook execution when no timeout is configured,
-// so a stuck pg_dumpall cannot block the backup pipeline forever.
+// Borne un hook sans timeout : un pg_dumpall bloqué ne gèle pas le pipeline.
 const DefaultHookTimeout = 5 * time.Minute
 
-// Hook is a command executed inside the target container before or after
-// the snapshot, e.g. ["sh", "-c", "pg_dumpall -U postgres > /var/lib/postgresql/data/dump.sql"].
+// Hook : commande exécutée dans le conteneur cible avant/après snapshot.
 type Hook struct {
 	Command   []string
 	Timeout   time.Duration
@@ -50,8 +42,7 @@ func (h *Hook) EffectiveTimeout() time.Duration {
 	return DefaultHookTimeout
 }
 
-// EffectiveOnFailure resolves the policy, falling back to the caller's
-// default (abort for pre-hooks, continue for post-hooks).
+// def : abort pour un pre-hook, continue pour un post-hook.
 func (h *Hook) EffectiveOnFailure(def HookFailurePolicy) HookFailurePolicy {
 	if h.OnFailure != "" {
 		return h.OnFailure
@@ -59,7 +50,7 @@ func (h *Hook) EffectiveOnFailure(def HookFailurePolicy) HookFailurePolicy {
 	return def
 }
 
-// RetentionPolicy maps one-to-one to restic `forget --keep-*` flags.
+// RetentionPolicy : correspondance directe avec restic forget --keep-*.
 type RetentionPolicy struct {
 	KeepLast    int
 	KeepHourly  int
@@ -67,7 +58,7 @@ type RetentionPolicy struct {
 	KeepWeekly  int
 	KeepMonthly int
 	KeepYearly  int
-	Prune       bool // reclaim repository space right after forgetting
+	Prune       bool // récupère l'espace juste après le forget
 }
 
 func (p RetentionPolicy) IsZero() bool {
@@ -76,10 +67,8 @@ func (p RetentionPolicy) IsZero() bool {
 }
 
 func (p RetentionPolicy) Validate() error {
+	// refuse une politique qui supprimerait tous les snapshots
 	if p.IsZero() {
-		// Refuse a policy that would delete every snapshot: retention is
-		// opt-in per keep rule, deleting everything must be explicit
-		// (dedicated snapshot deletion, not retention).
 		return fmt.Errorf("%w: retention policy keeps no snapshots at all", ErrInvalidInput)
 	}
 	for _, v := range []int{p.KeepLast, p.KeepHourly, p.KeepDaily, p.KeepWeekly, p.KeepMonthly, p.KeepYearly} {

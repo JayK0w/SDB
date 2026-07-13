@@ -10,8 +10,8 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// MaintenanceService runs the scheduled repository integrity checks
-// (restic check) across every configured storage.
+// MaintenanceService : vérifications d'intégrité planifiées (restic check)
+// sur tous les stockages.
 type MaintenanceService struct {
 	storages domain.StorageRepository
 	engine   domain.SnapshotEngine
@@ -25,8 +25,7 @@ func NewMaintenanceService(storages domain.StorageRepository, engine domain.Snap
 	return &MaintenanceService{storages: storages, engine: engine, logger: logger}
 }
 
-// RunChecks verifies every repository once and returns the joined
-// failures; one broken repository does not prevent checking the others.
+// RunChecks : un dépôt cassé n'empêche pas de vérifier les autres.
 func (s *MaintenanceService) RunChecks(ctx context.Context) error {
 	configs, err := s.storages.List(ctx)
 	if err != nil {
@@ -48,9 +47,8 @@ func (s *MaintenanceService) RunChecks(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Schedule runs RunChecks every interval until ctx is canceled. The first
-// check happens after one full interval: piling a repository scan onto
-// every process start would hurt more than it helps.
+// Schedule : RunChecks toutes les interval jusqu'à annulation du contexte.
+// Premier passage après un intervalle complet (pas de scan à chaque boot).
 func (s *MaintenanceService) Schedule(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
 		return

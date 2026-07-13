@@ -7,8 +7,8 @@ import { useEventsStore } from '@/stores/events'
 const health = useHealthStore()
 const events = useEventsStore()
 
-// Single global state, worst signal wins: red = critical, amber =
-// degraded (Docker down or live stream reconnecting), green = all good.
+// etat global : le pire signal gagne — rouge critique, ambre degrade
+// (Docker down ou WS en reconnexion), vert operationnel
 const level = computed(() => {
   if (health.status === 'down') return 'critical'
   if (health.status !== 'ok' || events.wsStatus !== 'open') return 'degraded'

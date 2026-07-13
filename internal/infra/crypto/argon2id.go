@@ -1,5 +1,5 @@
-// Package crypto implements the security ports: Argon2id password hashing
-// for user accounts and AES-256-GCM encryption for secrets at rest.
+// Package crypto : hachage Argon2id (mots de passe) et AES-256-GCM
+// (secrets au repos).
 package crypto
 
 import (
@@ -15,12 +15,11 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// Argon2id parameters follow OWASP guidance for interactive logins
-// (64 MiB memory, 3 iterations). They are embedded in the encoded hash,
-// so they can be raised later without invalidating existing hashes.
+// Paramètres OWASP (64 Mio, 3 itérations) — encodés dans le hash, donc
+// durcissables plus tard sans invalider l'existant.
 const (
 	argonTime    = 3
-	argonMemory  = 64 * 1024 // KiB
+	argonMemory  = 64 * 1024 // Kio
 	argonThreads = 2
 	argonSaltLen = 16
 	argonKeyLen  = 32
@@ -32,8 +31,7 @@ var _ domain.PasswordHasher = (*Argon2idHasher)(nil)
 
 func NewArgon2idHasher() *Argon2idHasher { return &Argon2idHasher{} }
 
-// Hash returns the standard encoded form:
-// $argon2id$v=19$m=65536,t=3,p=2$<salt>$<digest>
+// Hash : format encodé standard $argon2id$v=19$m=...,t=...,p=...$sel$empreinte
 func (h *Argon2idHasher) Hash(password string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
@@ -46,9 +44,8 @@ func (h *Argon2idHasher) Hash(password string) (string, error) {
 		base64.RawStdEncoding.EncodeToString(key)), nil
 }
 
-// Verify recomputes the hash with the parameters stored in encoded and
-// compares in constant time. It returns (false, nil) for a wrong password
-// and an error only for malformed or unsupported hashes.
+// Verify : recalcule avec les paramètres du hash, compare en temps constant.
+// (false, nil) = mauvais mot de passe ; erreur = hash malformé.
 func (h *Argon2idHasher) Verify(password, encoded string) (bool, error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[0] != "" || parts[1] != "argon2id" {

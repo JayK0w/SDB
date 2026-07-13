@@ -5,7 +5,6 @@ import { createReconnectingSocket, type ReconnectingSocket, type SocketStatus } 
 import type { JobStatus, ProgressEvent } from '@/types'
 import { useToastsStore } from './toasts'
 
-const MAX_EVENTS = 200
 const TERMINAL_LINGER_MS = 10000
 const TERMINAL: ReadonlySet<string> = new Set(['success', 'warning', 'failed', 'canceled'])
 
@@ -29,14 +28,13 @@ function wsURL(): string {
   return `${scheme}://${window.location.host}/api/v1/ws/metrics?token=${encodeURIComponent(getToken() || '')}`
 }
 
-// Live ProgressEvent stream from the backend hub: the event log, plus a
-// per-job aggregate the dashboard renders as progress cards.
+// Flux ProgressEvent du hub : agrégat par job (cartes de progression) +
+// compteur historyDirty que les vues observent pour se rafraîchir.
 export const useEventsStore = defineStore('events', {
   state: () => ({
     wsStatus: 'idle' as SocketStatus | 'idle',
-    events: [] as ProgressEvent[],
     progress: {} as Record<string, JobProgress>,
-    historyDirty: 0, // bumped on terminal events so views can refresh
+    historyDirty: 0, // incrémenté à chaque événement terminal
   }),
 
   getters: {
@@ -63,13 +61,9 @@ export const useEventsStore = defineStore('events', {
       socket = null
       this.wsStatus = 'idle'
       this.progress = {}
-      this.events = []
     },
 
     handle(ev: ProgressEvent): void {
-      this.events.unshift(ev)
-      if (this.events.length > MAX_EVENTS) this.events.length = MAX_EVENTS
-
       const kind: JobProgress['kind'] = ev.restore_id ? 'restore' : 'backup'
       const id = ev.restore_id || ev.backup_id
       if (!id) return

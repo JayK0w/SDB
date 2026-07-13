@@ -9,7 +9,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Responses
+// Reponses
 // ---------------------------------------------------------------------------
 
 type userDTO struct {
@@ -57,8 +57,8 @@ func toContainerDTO(c domain.Container) containerDTO {
 	}
 }
 
-// storageDTO never carries secret values: only the credential key names,
-// so the UI can show what is configured.
+// storageDTO : jamais de valeurs secretes — seuls les noms de cles,
+// pour que l UI montre ce qui est configure.
 type storageDTO struct {
 	ID             int64     `json:"id"`
 	Name           string    `json:"name"`
@@ -199,7 +199,7 @@ func fromDomainRetention(r *domain.RetentionPolicy) *retentionDTO {
 }
 
 // ---------------------------------------------------------------------------
-// Requests
+// Requetes
 // ---------------------------------------------------------------------------
 
 type loginRequest struct {
@@ -235,8 +235,8 @@ func (r storageRequest) toDomain(id int64) *domain.StorageConfig {
 		Type:        domain.StorageType(r.Type),
 		Endpoint:    r.Endpoint,
 		Credentials: r.Credentials,
-		// ResticPassword stays empty: generated on create, immutable on
-		// update (see StorageService).
+		// ResticPassword reste vide : genere a la creation, immuable en
+		// mise a jour (cf. StorageService)
 	}
 }
 

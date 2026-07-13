@@ -62,8 +62,8 @@ func TestTokenGarbageRejected(t *testing.T) {
 	}
 }
 
-// TestTokenAlgNoneRejected proves the parser pins HS256: a token signed
-// with alg=none must never validate (classic JWT confusion attack).
+// prouve l epinglage HS256 : un token signe alg=none ne doit jamais
+// passer (attaque classique par confusion d algorithme JWT)
 func TestTokenAlgNoneRejected(t *testing.T) {
 	mgr := NewTokenManager(testSecret, time.Hour)
 	claims := &Claims{

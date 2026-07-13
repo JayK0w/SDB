@@ -10,13 +10,12 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// MinPasswordLength follows NIST guidance: length over composition rules.
+// NIST : la longueur prime sur les règles de composition
 const MinPasswordLength = 12
 
-// AuthService implements authentication and user management. Role-based
-// authorization (admin-only endpoints) is enforced by the HTTP middleware;
-// this service enforces the invariants that must hold regardless of the
-// caller, such as never deleting or demoting the last admin.
+// AuthService : authentification et gestion des comptes. L'autorisation
+// par rôle vit dans le middleware HTTP ; ici on garde les invariants
+// (ex : jamais supprimer/rétrograder le dernier admin).
 type AuthService struct {
 	users  domain.UserRepository
 	hasher domain.PasswordHasher
@@ -33,9 +32,8 @@ func NewAuthService(users domain.UserRepository, hasher domain.PasswordHasher, l
 	return &AuthService{users: users, hasher: hasher, logger: logger}
 }
 
-// Login returns the user on success and domain.ErrUnauthorized for both
-// unknown usernames and wrong passwords (no account enumeration). A dummy
-// hash verification keeps the timing of the two cases comparable.
+// Login : ErrUnauthorized pour utilisateur inconnu ET mauvais mot de passe
+// (pas d'énumération de comptes) ; hash factice pour uniformiser le timing.
 func (s *AuthService) Login(ctx context.Context, username, password string) (*domain.User, error) {
 	u, err := s.users.GetByUsername(ctx, username)
 	if errors.Is(err, domain.ErrNotFound) {
@@ -129,9 +127,8 @@ func (s *AuthService) DeleteUser(ctx context.Context, userID int64) error {
 	return s.users.Delete(ctx, userID)
 }
 
-// EnsureInitialAdmin creates the first admin account when the user table
-// is empty. With an empty password a strong random one is generated and
-// returned so the caller can surface it exactly once.
+// EnsureInitialAdmin : crée le premier admin si la table est vide ;
+// mot de passe généré retourné pour affichage unique dans les logs.
 func (s *AuthService) EnsureInitialAdmin(ctx context.Context, username, password string) (created bool, generated string, err error) {
 	n, err := s.users.Count(ctx)
 	if err != nil {
@@ -144,7 +141,7 @@ func (s *AuthService) EnsureInitialAdmin(ctx context.Context, username, password
 		username = "admin"
 	}
 	if password == "" {
-		password, err = randomSecret(18) // 24 characters
+		password, err = randomSecret(18) // 24 caractères
 		if err != nil {
 			return false, "", err
 		}
@@ -169,8 +166,7 @@ func (s *AuthService) ensureNotLastAdmin(ctx context.Context, excludeID int64) e
 	return fmt.Errorf("%w: at least one admin account must remain", domain.ErrForbidden)
 }
 
-// dummy lazily builds a hash used to equalize Login timing when the
-// username does not exist.
+// dummy : hash de référence pour égaliser le timing des logins inconnus.
 func (s *AuthService) dummy() string {
 	s.dummyOnce.Do(func() {
 		if h, err := s.hasher.Hash("sdb-timing-equalizer"); err == nil {

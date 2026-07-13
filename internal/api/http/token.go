@@ -10,8 +10,7 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// Claims is the JWT payload issued at login. The user ID travels in the
-// registered Subject claim.
+// Claims : payload JWT émis au login (ID utilisateur dans Subject).
 type Claims struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
@@ -25,7 +24,7 @@ func (c *Claims) UserID() int64 {
 
 func (c *Claims) IsAdmin() bool { return domain.Role(c.Role) == domain.RoleAdmin }
 
-// TokenManager issues and validates HMAC-SHA256 signed access tokens.
+// TokenManager : émission/validation de tokens HMAC-SHA256.
 type TokenManager struct {
 	secret []byte
 	ttl    time.Duration
@@ -55,10 +54,8 @@ func (m *TokenManager) Issue(user *domain.User) (token string, expiresAt time.Ti
 	return token, expiresAt, nil
 }
 
-// Parse validates the signature, algorithm (pinned to HS256 to rule out
-// algorithm-confusion attacks), issuer and expiry. Every failure maps to
-// ErrUnauthorized without detail: token errors are not the client's
-// business to distinguish.
+// Parse : algo épinglé HS256 (bloque la confusion d'algorithme), issuer et
+// expiration vérifiés. Toute erreur → ErrUnauthorized opaque.
 func (m *TokenManager) Parse(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := jwt.ParseWithClaims(tokenString, claims,

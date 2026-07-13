@@ -1,4 +1,4 @@
-# Binaries and local data
+# Binaires et données locales
 /bin/
 /data/
 *.db
@@ -10,10 +10,10 @@
 .env
 secrets/
 
-# Local tooling
+# Outillage local
 .claude/settings.local.json
 
-# Test artifacts
+# Artefacts de test
 coverage.out
 
 # Frontend

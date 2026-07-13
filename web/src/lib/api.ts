@@ -47,7 +47,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     throw new ApiError(0, 'Serveur injoignable')
   }
 
-  // Expired/invalid session: purge credentials and let the app react.
+  // session expiree/invalide : purge et signal global
   if (res.status === 401 && path !== '/auth/login') {
     localStorage.removeItem('sdb.token')
     localStorage.removeItem('sdb.user')
@@ -59,7 +59,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   try {
     data = await res.json()
   } catch {
-    /* empty or non-JSON body */
+    /* corps vide ou non-JSON */
   }
   if (!res.ok) {
     const message = (data as { error?: string } | null)?.error || `Erreur HTTP ${res.status}`

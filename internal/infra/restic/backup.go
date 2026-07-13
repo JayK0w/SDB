@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/standalone-docker-backup/sdb/internal/domain"
+	"github.com/standalone-docker-backup/sdb/internal/infra/streamio"
 )
 
 func (e *Engine) Backup(ctx context.Context, storage *domain.StorageConfig, backupID int64,
@@ -17,8 +18,8 @@ func (e *Engine) Backup(ctx context.Context, storage *domain.StorageConfig, back
 		return nil, err
 	}
 
-	// A fixed --host keeps restic's snapshot grouping stable regardless of
-	// the random hostname of each ephemeral worker.
+	// --host fixe : regroupement stable des snapshots malgré les hostnames
+	// aléatoires des workers
 	cmd := []string{"backup", "--json", "--host", "sdb"}
 	for _, t := range tags {
 		cmd = append(cmd, "--tag", t)
@@ -26,15 +27,15 @@ func (e *Engine) Backup(ctx context.Context, storage *domain.StorageConfig, back
 	cmd = append(cmd, paths...)
 
 	var summary *domain.BackupSummary
-	stdout := &lineWriter{emit: func(line string) {
+	stdout := &streamio.LineWriter{Emit: func(line string) {
 		ev, sum := decodeBackupLine(line, backupID)
 		if sum != nil {
 			summary = sum
 		}
 		send(ctx, events, ev)
 	}}
-	stderrBuf := newBoundedBuffer(32 << 10)
-	stderr := &lineWriter{emit: func(line string) {
+	stderrBuf := streamio.NewBounded(32 << 10)
+	stderr := &streamio.LineWriter{Emit: func(line string) {
 		stderrBuf.Write([]byte(line + "\n"))
 		send(ctx, events, domain.ProgressEvent{
 			BackupID: backupID,
@@ -46,8 +47,8 @@ func (e *Engine) Backup(ctx context.Context, storage *domain.StorageConfig, back
 
 	labels := map[string]string{"sdb.backup_id": strconv.FormatInt(backupID, 10)}
 	exit, err := e.run(ctx, storage, cmd, workerMounts, labels, stdout, stderr)
-	stdout.flush()
-	stderr.flush()
+	stdout.Flush()
+	stderr.Flush()
 	if err != nil {
 		return nil, err
 	}
@@ -58,18 +59,16 @@ func (e *Engine) Backup(ctx context.Context, storage *domain.StorageConfig, back
 	case exit == 0:
 		return nil, fmt.Errorf("restic exited successfully but produced no summary")
 	case exit == 3 && summary != nil:
-		// Exit code 3: the snapshot was created but some source files
-		// could not be read — usable, but flagged as a warning.
+		// exit 3 : snapshot créé mais fichiers sources illisibles → warning
 		return summary, fmt.Errorf("%w: %s", domain.ErrPartial, stderrBuf)
 	default:
 		return nil, fmt.Errorf("restic backup failed (exit %d): %s", exit, stderrBuf)
 	}
 }
 
-// Restore mounts the target volume read-write at the same path used
-// during backup (/sdb/data/<volume>) and restores in place with an
-// --include filter, so a snapshot spanning several volumes only writes
-// into the requested one.
+// Restore : volume cible monté en écriture au MÊME chemin qu'au backup,
+// restauration en place avec --include (un snapshot multi-volumes n'écrit
+// que dans le volume demandé).
 func (e *Engine) Restore(ctx context.Context, storage *domain.StorageConfig,
 	snapshotID, targetVolume string, events chan<- domain.ProgressEvent) error {
 
@@ -82,11 +81,11 @@ func (e *Engine) Restore(ctx context.Context, storage *domain.StorageConfig,
 
 	cmd := []string{"restore", snapshotID, "--json", "--target", "/", "--include", m.Destination}
 
-	stdout := &lineWriter{emit: func(line string) {
-		send(ctx, events, decodeRestoreLine(line, 0))
+	stdout := &streamio.LineWriter{Emit: func(line string) {
+		send(ctx, events, decodeRestoreLine(line))
 	}}
-	stderrBuf := newBoundedBuffer(32 << 10)
-	stderr := &lineWriter{emit: func(line string) {
+	stderrBuf := streamio.NewBounded(32 << 10)
+	stderr := &streamio.LineWriter{Emit: func(line string) {
 		stderrBuf.Write([]byte(line + "\n"))
 		send(ctx, events, domain.ProgressEvent{
 			Type:    domain.EventError,
@@ -96,8 +95,8 @@ func (e *Engine) Restore(ctx context.Context, storage *domain.StorageConfig,
 	}}
 
 	exit, err := e.run(ctx, storage, cmd, []domain.Mount{m}, nil, stdout, stderr)
-	stdout.flush()
-	stderr.flush()
+	stdout.Flush()
+	stderr.Flush()
 	if err != nil {
 		return err
 	}

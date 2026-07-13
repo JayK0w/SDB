@@ -12,21 +12,18 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// RestoreRequest describes a restore of one snapshot into one volume.
 type RestoreRequest struct {
 	StorageID    int64
 	SnapshotID   string
 	TargetVolume string
-	// StopContainer, when set, names the container to stop for the
-	// duration of the restore (an application writing to the volume while
-	// restic rewrites it would corrupt the result). It is restarted
-	// afterwards no matter how the restore ends.
+	// StopContainer : conteneur à arrêter pendant la restauration (une
+	// appli qui écrit pendant la réécriture corromprait le volume) ;
+	// redémarré ensuite quoi qu'il arrive.
 	StopContainer string
 }
 
-// RestoreService runs restores asynchronously, one at a time per target
-// volume, persists every run to restores_history and streams progress
-// through the EventPublisher with the restore id stamped on each event.
+// RestoreService : restaurations asynchrones, une à la fois par volume
+// cible, historisées et diffusées avec restore_id estampillé.
 type RestoreService struct {
 	containers domain.ContainerRuntime
 	engine     domain.SnapshotEngine
@@ -36,7 +33,7 @@ type RestoreService struct {
 	logger     *slog.Logger
 
 	mu   sync.Mutex
-	busy map[string]*restoreJob // keyed by target volume
+	busy map[string]*restoreJob // clé = volume cible
 	wg   sync.WaitGroup
 }
 
@@ -67,8 +64,7 @@ func NewRestoreService(
 	}
 }
 
-// Start validates the request, records a pending restore and launches it
-// asynchronously (HTTP 202 semantics).
+// Start : valide, enregistre un run pending, lance en async (HTTP 202).
 func (s *RestoreService) Start(ctx context.Context, req RestoreRequest) (*domain.RestoreRecord, error) {
 	if req.SnapshotID == "" || req.TargetVolume == "" {
 		return nil, fmt.Errorf("%w: snapshot id and target volume are required", domain.ErrInvalidInput)
@@ -123,7 +119,6 @@ func (s *RestoreService) Start(ctx context.Context, req RestoreRequest) (*domain
 	return rec, nil
 }
 
-// Cancel aborts a running restore by its record ID.
 func (s *RestoreService) Cancel(restoreID int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -136,8 +131,6 @@ func (s *RestoreService) Cancel(restoreID int64) error {
 	return fmt.Errorf("%w: no running restore with id %d", domain.ErrNotFound, restoreID)
 }
 
-// Close cancels every running restore and waits for their rollback paths,
-// bounded by ctx.
 func (s *RestoreService) Close(ctx context.Context) error {
 	s.mu.Lock()
 	for _, j := range s.busy {
@@ -182,6 +175,7 @@ func (s *RestoreService) execute(ctx context.Context, rec *domain.RestoreRecord,
 		s.event(rec, domain.EventLog, "container "+target.Name+" stopped for restore")
 	}
 
+	// relais des événements moteur, estampillés du restore_id
 	events := make(chan domain.ProgressEvent, 64)
 	var fwd sync.WaitGroup
 	fwd.Add(1)
@@ -197,6 +191,7 @@ func (s *RestoreService) execute(ctx context.Context, rec *domain.RestoreRecord,
 	close(events)
 	fwd.Wait()
 
+	// rollback : redémarrage sur contexte insensible à l'annulation
 	if stoppedByUs {
 		restartCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		if err := s.containers.Start(restartCtx, target.ID); err != nil {

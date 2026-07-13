@@ -1,5 +1,5 @@
-// Package web embeds the built frontend (web/dist) into the SDB binary,
-// so the production image ships a single static executable.
+// Package web : embarque le frontend compilé (web/dist) dans le binaire —
+// l'image de production est un seul exécutable statique.
 package web
 
 import (
@@ -8,14 +8,14 @@ import (
 	"io/fs"
 )
 
-// The all: prefix keeps dotfiles (web/dist/.gitkeep guarantees the
-// directory exists even before the first frontend build).
+// all: inclut les dotfiles (.gitkeep garantit l'existence de dist même
+// avant le premier build frontend)
 //
 //go:embed all:dist
 var dist embed.FS
 
-// Dist returns the built frontend rooted at index.html. It fails when the
-// frontend has not been built yet, in which case the server runs API-only.
+// Dist : frontend compilé. Échec si non construit → le serveur tourne en
+// mode API seule.
 func Dist() (fs.FS, error) {
 	sub, err := fs.Sub(dist, "dist")
 	if err != nil {

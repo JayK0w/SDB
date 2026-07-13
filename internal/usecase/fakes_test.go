@@ -11,7 +11,7 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// domain.ContainerRuntime fake
+// fake domain.ContainerRuntime
 // ---------------------------------------------------------------------------
 
 type fakeRuntime struct {
@@ -35,7 +35,7 @@ func (f *fakeRuntime) List(context.Context, bool) ([]domain.Container, error) {
 }
 
 func (f *fakeRuntime) Get(_ context.Context, id string) (*domain.Container, error) {
-	// Docker inspect resolves both IDs and names; the fake mirrors that.
+	// docker inspect resout ID et nom : le fake fait pareil
 	if f.container == nil || (f.container.ID != id && f.container.Name != id) {
 		return nil, domain.ErrNotFound
 	}
@@ -91,7 +91,7 @@ func (f *fakeRuntime) started() []string {
 }
 
 // ---------------------------------------------------------------------------
-// domain.SnapshotEngine fake
+// fake domain.SnapshotEngine
 // ---------------------------------------------------------------------------
 
 type fakeEngine struct {
@@ -101,7 +101,7 @@ type fakeEngine struct {
 	restoreErr  error
 	checkErr    error
 	summary     *domain.BackupSummary
-	backupFn    func(ctx context.Context) error // optional blocking behaviour
+	backupFn    func(ctx context.Context) error // blocage optionnel (tests de concurrence)
 	restoreFn   func(ctx context.Context) error
 	ensureCalls int
 	backupCalls int
@@ -175,7 +175,7 @@ func (f *fakeEngine) forgotten() []domain.RetentionPolicy {
 }
 
 // ---------------------------------------------------------------------------
-// domain.BackupHistoryRepository fake
+// fake domain.BackupHistoryRepository
 // ---------------------------------------------------------------------------
 
 type memHistory struct {
@@ -229,7 +229,7 @@ func (m *memHistory) List(context.Context, domain.HistoryFilter) ([]domain.Backu
 func (m *memHistory) FailInterrupted(context.Context, string) (int64, error) { return 0, nil }
 
 // ---------------------------------------------------------------------------
-// domain.StorageRepository fake
+// fake domain.StorageRepository
 // ---------------------------------------------------------------------------
 
 type memStorages struct {
@@ -291,7 +291,7 @@ func (m *memStorages) Delete(_ context.Context, id int64) error {
 }
 
 // ---------------------------------------------------------------------------
-// domain.RestoreHistoryRepository fake
+// fake domain.RestoreHistoryRepository
 // ---------------------------------------------------------------------------
 
 type memRestores struct {
@@ -345,7 +345,7 @@ func (m *memRestores) List(context.Context, domain.RestoreFilter) ([]domain.Rest
 func (m *memRestores) FailInterrupted(context.Context, string) (int64, error) { return 0, nil }
 
 // ---------------------------------------------------------------------------
-// domain.ScheduleRepository fake
+// fake domain.ScheduleRepository
 // ---------------------------------------------------------------------------
 
 type memSchedules struct {
@@ -419,7 +419,7 @@ func (m *memSchedules) TouchLastRun(_ context.Context, id int64, at time.Time) e
 }
 
 // ---------------------------------------------------------------------------
-// domain.UserRepository fake
+// fake domain.UserRepository
 // ---------------------------------------------------------------------------
 
 type memUsers struct {
@@ -504,7 +504,7 @@ func (m *memUsers) Count(context.Context) (int64, error) {
 }
 
 // ---------------------------------------------------------------------------
-// domain.EventPublisher fake and shared helpers
+// fake domain.EventPublisher et helpers partages
 // ---------------------------------------------------------------------------
 
 type capturePublisher struct {
@@ -524,7 +524,7 @@ func (p *capturePublisher) all() []domain.ProgressEvent {
 	return append([]domain.ProgressEvent(nil), p.events...)
 }
 
-// fakeHasher avoids Argon2id cost in usecase tests.
+// fakeHasher : evite le cout Argon2id dans les tests.
 type fakeHasher struct{}
 
 func (fakeHasher) Hash(password string) (string, error) { return "hash:" + password, nil }

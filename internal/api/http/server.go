@@ -21,15 +21,14 @@ type Options struct {
 	JWTSecret string
 	TokenTTL  time.Duration
 	Version   string
-	// Static, when set, is the built frontend served for non-API routes.
-	Static fs.FS
-	// Metrics, when set together with MetricsToken, exposes GET /metrics
-	// behind the static bearer token (Prometheus-friendly auth).
+	Static    fs.FS // frontend embarqué, nil = API seule
+	// Metrics + MetricsToken : GET /metrics derrière un token statique ;
+	// token vide = endpoint absent (sécurisé par défaut).
 	Metrics      http.Handler
 	MetricsToken string
 }
 
-// Services groups the usecases the delivery layer exposes.
+// Services : usecases exposés par la couche de livraison.
 type Services struct {
 	Auth       *usecase.AuthService
 	Containers *usecase.ContainerService
@@ -64,9 +63,8 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
-			// Same-origin only: prevents cross-site WebSocket hijacking
-			// from arbitrary pages while still allowing non-browser
-			// clients (no Origin header).
+			// same-origin strict : bloque le hijacking WebSocket
+			// cross-site ; Origin absent (client non-navigateur) accepté
 			CheckOrigin: checkSameOrigin,
 		},
 	}
@@ -106,7 +104,7 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 
 		authed.GET("/ws/metrics", s.handleMetricsWS)
 
-		// Password change is self-or-admin; the handler checks.
+		// changement de mot de passe : soi-même ou admin (vérifié dans le handler)
 		authed.PUT("/users/:id/password", s.handleUpdatePassword)
 
 		admin := authed.Group("", s.adminRequired())
@@ -123,8 +121,6 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 		}
 	}
 
-	// Prometheus exposition: disabled unless a token is configured — a
-	// metrics endpoint open by default would leak operational detail.
 	if opts.Metrics != nil && opts.MetricsToken != "" {
 		r.GET("/metrics", s.staticTokenRequired(opts.MetricsToken), gin.WrapH(opts.Metrics))
 	}
@@ -138,13 +134,13 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 		Handler:           r,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second, // hijacked WebSocket conns are exempt
+		WriteTimeout:      60 * time.Second, // les connexions WS hijackées y échappent
 		IdleTimeout:       120 * time.Second,
 	}
 	return s
 }
 
-// Run serves until ctx is canceled, then shuts down gracefully.
+// Run : sert jusqu'à annulation du contexte, puis arrêt gracieux.
 func (s *Server) Run(ctx context.Context) error {
 	errCh := make(chan error, 1)
 	go func() {

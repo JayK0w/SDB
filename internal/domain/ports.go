@@ -6,9 +6,7 @@ import (
 	"time"
 )
 
-// ---------------------------------------------------------------------------
-// Persistence ports — implemented by internal/infra/sqlite.
-// ---------------------------------------------------------------------------
+// --- Ports de persistance (implémentés par internal/infra/sqlite) ---
 
 type UserRepository interface {
 	Create(ctx context.Context, user *User) error
@@ -17,9 +15,7 @@ type UserRepository interface {
 	List(ctx context.Context) ([]User, error)
 	Update(ctx context.Context, user *User) error
 	Delete(ctx context.Context, id int64) error
-	// Count lets the bootstrap detect first boot and create the initial
-	// admin account.
-	Count(ctx context.Context) (int64, error)
+	Count(ctx context.Context) (int64, error) // détection premier démarrage
 }
 
 type StorageRepository interface {
@@ -35,8 +31,8 @@ type BackupHistoryRepository interface {
 	Update(ctx context.Context, rec *BackupRecord) error
 	GetByID(ctx context.Context, id int64) (*BackupRecord, error)
 	List(ctx context.Context, filter HistoryFilter) ([]BackupRecord, error)
-	// FailInterrupted marks every non-terminal record as failed. Called at
-	// startup so runs interrupted by a crash do not stay "running" forever.
+	// FailInterrupted : au démarrage, bascule en failed les runs restés
+	// pending/running après un crash.
 	FailInterrupted(ctx context.Context, reason string) (int64, error)
 }
 
@@ -54,28 +50,20 @@ type ScheduleRepository interface {
 	List(ctx context.Context) ([]BackupSchedule, error)
 	Update(ctx context.Context, s *BackupSchedule) error
 	Delete(ctx context.Context, id int64) error
-	// TouchLastRun records when the schedule last fired.
 	TouchLastRun(ctx context.Context, id int64, at time.Time) error
 }
 
-// ---------------------------------------------------------------------------
-// Container runtime port — implemented by internal/infra/docker.
-// ---------------------------------------------------------------------------
+// --- Port runtime conteneurs (implémenté par internal/infra/docker) ---
 
-// WorkerSpec describes the ephemeral container SDB spawns to run Restic
-// against the target volumes.
+// WorkerSpec : conteneur éphémère qui exécute restic.
 type WorkerSpec struct {
 	Image string
 	Cmd   []string
-	// Env carries RESTIC_* variables including secrets: implementations
-	// and callers must never log this field.
+	// Env contient les secrets RESTIC_* : ne jamais logger.
 	Env []string
-	// Files are written into the worker (0600) before it starts — used
-	// for secrets that must be files (SSH keys, GCS service accounts).
-	// Never log this field either.
-	Files map[string][]byte
-	// Mounts are attached to the worker; the runtime forces ReadOnly=true
-	// on every mount unless the spec explicitly allows writing (restores).
+	// Files : secrets écrits en 0600 dans le worker avant démarrage
+	// (clé SSH, compte de service GCS). Ne jamais logger.
+	Files       map[string][]byte
 	Mounts      []Mount
 	Labels      map[string]string
 	NetworkMode string
@@ -93,63 +81,47 @@ type ContainerRuntime interface {
 	Get(ctx context.Context, id string) (*Container, error)
 	Stop(ctx context.Context, id string, timeout time.Duration) error
 	Start(ctx context.Context, id string) error
-	// Exec runs a hook command inside a running container and captures its
-	// output. The command is killed when the timeout elapses.
+	// Exec : lance un hook dans un conteneur en marche, tué au timeout.
 	Exec(ctx context.Context, id string, cmd []string, timeout time.Duration) (*ExecResult, error)
-	// RunWorker starts the ephemeral backup worker, streams its output to
-	// stdout/stderr and blocks until it exits. The worker container is
-	// always removed afterwards, even on error or context cancellation,
-	// and no write to stdout/stderr happens after RunWorker returns.
+	// RunWorker : démarre le worker, stream sa sortie, bloque jusqu'à sa
+	// fin. Garanties : worker toujours supprimé (même sur annulation),
+	// aucune écriture sur stdout/stderr après le retour.
 	RunWorker(ctx context.Context, spec WorkerSpec, stdout, stderr io.Writer) (exitCode int, err error)
 }
 
-// ---------------------------------------------------------------------------
-// Snapshot engine port — implemented by internal/infra/restic.
-// ---------------------------------------------------------------------------
+// --- Port moteur de snapshots (implémenté par internal/infra/restic) ---
 
 type SnapshotEngine interface {
-	// EnsureRepository initialises the Restic repository if it does not
-	// exist yet; it is a no-op on an already initialised repository.
+	// EnsureRepository : initialise le dépôt s'il n'existe pas encore.
 	EnsureRepository(ctx context.Context, storage *StorageConfig) error
-	// Backup snapshots the given mounts and pushes ProgressEvents parsed
-	// from Restic's JSON output while running. It returns the summary of
-	// the created snapshot.
+	// Backup : snapshot des montages, événements poussés en continu.
 	Backup(ctx context.Context, storage *StorageConfig, backupID int64, mounts []Mount, tags []string, events chan<- ProgressEvent) (*BackupSummary, error)
-	// Restore extracts a snapshot into the target volume through a
-	// read-write worker.
+	// Restore : extrait un snapshot dans le volume cible (worker en écriture).
 	Restore(ctx context.Context, storage *StorageConfig, snapshotID, targetVolume string, events chan<- ProgressEvent) error
 	Snapshots(ctx context.Context, storage *StorageConfig, tags []string) ([]Snapshot, error)
-	// Forget applies the retention policy (restic forget, plus --prune
-	// when the policy asks for it).
+	// Forget : applique la rétention (restic forget, --prune si demandé).
 	Forget(ctx context.Context, storage *StorageConfig, policy RetentionPolicy) error
-	// Check verifies repository integrity (scheduled maintenance).
+	// Check : vérification d'intégrité du dépôt.
 	Check(ctx context.Context, storage *StorageConfig) error
 }
 
-// ---------------------------------------------------------------------------
-// Security ports — implemented by internal/infra/crypto.
-// ---------------------------------------------------------------------------
+// --- Ports sécurité (implémentés par internal/infra/crypto) ---
 
-// PasswordHasher hashes user passwords (Argon2id).
 type PasswordHasher interface {
 	Hash(password string) (string, error)
 	Verify(password, encodedHash string) (bool, error)
 }
 
-// Cipher protects secrets at rest (storage credentials, Restic repository
-// passwords) with AES-256-GCM under the SDB master key.
+// Cipher : chiffrement des secrets au repos sous la clé maître.
 type Cipher interface {
 	Encrypt(plaintext []byte) ([]byte, error)
 	Decrypt(ciphertext []byte) ([]byte, error)
 }
 
-// ---------------------------------------------------------------------------
-// Delivery ports — implemented by the WebSocket hub (internal/api/http).
-// ---------------------------------------------------------------------------
+// --- Port de diffusion (hub WebSocket, collecteur Prometheus) ---
 
-// EventPublisher fans ProgressEvents out to connected clients. Publish
-// must never block the backup goroutine: slow consumers are dropped, not
-// waited for.
+// EventPublisher : Publish ne doit JAMAIS bloquer — un consommateur lent
+// est abandonné, pas attendu.
 type EventPublisher interface {
 	Publish(event ProgressEvent)
 }

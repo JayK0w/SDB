@@ -2,22 +2,18 @@ package domain
 
 import "time"
 
-// EventType classifies messages streamed to the frontend over the
-// WebSocket hub while a backup or restore is running.
 type EventType string
 
 const (
-	EventLog      EventType = "log"      // raw Restic stdout/stderr line
-	EventProgress EventType = "progress" // percentage and byte/file counters
-	EventStatus   EventType = "status"   // lifecycle transition (pending -> running -> ...)
-	EventSummary  EventType = "summary"  // terminal event carrying the final numbers
-	EventError    EventType = "error"    // non-fatal error line (rendered red by the UI)
+	EventLog      EventType = "log"      // ligne brute de restic
+	EventProgress EventType = "progress" // compteurs pourcentage/octets
+	EventStatus   EventType = "status"   // transition de cycle de vie
+	EventSummary  EventType = "summary"  // bilan final
+	EventError    EventType = "error"    // erreur non fatale (rouge côté UI)
 )
 
-// ProgressEvent is the unit published through the hub. The JSON tags are
-// the WebSocket wire format consumed by the Vue frontend, which makes this
-// struct the single source of truth for that contract. Exactly one of
-// BackupID/RestoreID is set for job-scoped events.
+// ProgressEvent : unité diffusée par le hub. Les tags JSON SONT le contrat
+// WebSocket consommé par le frontend. BackupID ou RestoreID, jamais les deux.
 type ProgressEvent struct {
 	BackupID   int64        `json:"backup_id,omitempty"`
 	RestoreID  int64        `json:"restore_id,omitempty"`

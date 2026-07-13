@@ -1,5 +1,5 @@
-// API wire types — mirrors the Go DTOs in internal/api/http/dto.go and
-// the WebSocket ProgressEvent in internal/domain/progress.go.
+// Types du contrat API — miroir des DTO Go (internal/api/http/dto.go)
+// et du ProgressEvent WebSocket (internal/domain/progress.go).
 
 export type Role = 'admin' | 'user'
 export type JobStatus = 'pending' | 'running' | 'success' | 'warning' | 'failed' | 'canceled'

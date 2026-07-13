@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-/* Dark-mode-first: the dark palette is the design, not a variant. */
+/* Dark-mode-first : la palette sombre EST le design. */
 html {
   color-scheme: dark;
 }

@@ -12,11 +12,10 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// SchedulerService owns recurring backups: CRUD over schedules plus the
-// cron engine firing them. robfig/cron is a pure in-process timing
-// library (comparable to time.Ticker), which is why the usecase layer may
-// depend on it directly. Expressions use the standard 5-field syntax and
-// run in the server's timezone (UTC in the shipped container).
+// SchedulerService : CRUD des planifications + moteur cron qui les tire.
+// robfig/cron est une lib de timing pure (comparable à time.Ticker), d'où
+// sa présence tolérée dans la couche usecase. Expressions 5 champs, heure
+// serveur (UTC dans le conteneur livré).
 type SchedulerService struct {
 	schedules domain.ScheduleRepository
 	backups   *BackupService
@@ -40,7 +39,6 @@ func NewSchedulerService(schedules domain.ScheduleRepository, backups *BackupSer
 	}
 }
 
-// ValidateCron rejects malformed expressions before they are persisted.
 func ValidateCron(spec string) error {
 	if _, err := cron.ParseStandard(spec); err != nil {
 		return fmt.Errorf("%w: invalid cron expression %q: %v", domain.ErrInvalidInput, spec, err)
@@ -48,8 +46,8 @@ func ValidateCron(spec string) error {
 	return nil
 }
 
-// Run loads the schedules, starts the cron engine and blocks until ctx is
-// canceled; in-flight fired backups are owned by the BackupService.
+// Run : charge les planifications, démarre le cron, bloque jusqu'à
+// annulation. Les backups tirés appartiennent au BackupService.
 func (s *SchedulerService) Run(ctx context.Context) error {
 	if err := s.reload(ctx); err != nil {
 		return err
@@ -61,9 +59,8 @@ func (s *SchedulerService) Run(ctx context.Context) error {
 	return nil
 }
 
-// reload rebuilds every cron entry from the store; called at startup and
-// after each CRUD change (schedules are few, a full rebuild is simpler
-// and safer than entry surgery).
+// reload : reconstruit toutes les entrées cron (peu de planifs → rebuild
+// complet plus simple et sûr que la chirurgie d'entrées).
 func (s *SchedulerService) reload(ctx context.Context) error {
 	all, err := s.schedules.List(ctx)
 	if err != nil {
@@ -81,11 +78,10 @@ func (s *SchedulerService) reload(ctx context.Context) error {
 		if !sched.Enabled {
 			continue
 		}
-		sched := sched // capture per iteration
+		sched := sched // capture par itération
 		entryID, err := s.cron.AddFunc(sched.Cron, func() { s.fire(sched) })
 		if err != nil {
-			// A malformed expression slipped into the store: skip it
-			// rather than blocking every other schedule.
+			// expression corrompue : on saute plutôt que bloquer les autres
 			s.logger.Error("skipping schedule with invalid cron expression",
 				"schedule", sched.Name, "cron", sched.Cron, "error", err)
 			continue
@@ -96,9 +92,8 @@ func (s *SchedulerService) reload(ctx context.Context) error {
 	return nil
 }
 
-// fire triggers one scheduled run. A conflict (previous run still going)
-// is logged and skipped: overlapping backups of one container are refused
-// by design.
+// fire : un conflit (run précédent encore en cours) est loggé et sauté —
+// pas de sauvegardes superposées sur un même conteneur.
 func (s *SchedulerService) fire(sched domain.BackupSchedule) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -115,7 +110,7 @@ func (s *SchedulerService) fire(sched domain.BackupSchedule) {
 	}
 }
 
-// RunNow fires a schedule immediately, outside its cron cadence.
+// RunNow : déclenchement manuel hors cadence.
 func (s *SchedulerService) RunNow(ctx context.Context, id int64) (*domain.BackupRecord, error) {
 	sched, err := s.schedules.GetByID(ctx, id)
 	if err != nil {
@@ -131,7 +126,7 @@ func (s *SchedulerService) RunNow(ctx context.Context, id int64) (*domain.Backup
 	return rec, nil
 }
 
-// --- CRUD (validates, persists, then hot-reloads the cron entries) ---
+// CRUD : valide, persiste, recharge à chaud les entrées cron.
 
 func (s *SchedulerService) Create(ctx context.Context, sched *domain.BackupSchedule) error {
 	if err := sched.Validate(); err != nil {

@@ -1,12 +1,12 @@
 package sqlite
 
 import (
+	"database/sql"
 	"strings"
 	"time"
 )
 
-// Timestamps are stored as RFC3339Nano UTC strings: readable in the DB,
-// lexicographically sortable, and lossless for Go time values.
+// timestamps stockés en RFC3339Nano UTC : lisibles, triables, sans perte
 
 func now() string { return fmtTime(time.Now()) }
 
@@ -20,9 +20,15 @@ func parseTime(s string) time.Time {
 	return t
 }
 
-// modernc.org/sqlite wraps SQLite constraint failures in plain errors; the
-// message substrings below are part of SQLite's stable public wording, so
-// matching them is more version-proof than importing driver error codes.
+func nullTime(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return fmtTime(*t)
+}
+
+// détection par message : formulation stable de SQLite, plus robuste que
+// d'importer les codes internes du driver
 
 func isUniqueViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "UNIQUE constraint failed")
@@ -30,4 +36,19 @@ func isUniqueViolation(err error) bool {
 
 func isForeignKeyViolation(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "FOREIGN KEY constraint failed")
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func requireAffected(res sql.Result, sentinel error) error {
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sentinel
+	}
+	return nil
 }

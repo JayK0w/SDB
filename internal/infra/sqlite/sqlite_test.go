@@ -120,7 +120,7 @@ func TestStorageRepoEncryptsSecretsAtRest(t *testing.T) {
 		t.Fatal("credentials did not round-trip")
 	}
 
-	// The raw database blobs must not contain any plaintext secret.
+	// les blobs bruts ne doivent contenir aucun secret en clair
 	var creds, password []byte
 	err = db.QueryRowContext(ctx,
 		`SELECT credentials_enc, restic_password_enc FROM storage_configs WHERE id = ?`, cfg.ID).

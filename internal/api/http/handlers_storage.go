@@ -102,16 +102,15 @@ func (s *Server) handleListSnapshots(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
-// handleCheckStorage triggers an on-demand integrity check. restic check
-// can run for minutes, so it executes in the background and reports
-// through the event stream and the logs (HTTP 202).
+// handleCheckStorage : restic check peut durer des minutes → exécution en
+// arrière-plan, résultat via le flux d'événements et les logs (202).
 func (s *Server) handleCheckStorage(c *gin.Context) {
 	id, err := pathID(c)
 	if err != nil {
 		s.respondError(c, err)
 		return
 	}
-	// Validate existence before accepting the job.
+	// existence vérifiée avant d'accepter le job
 	if _, err := s.svc.Storages.Get(c.Request.Context(), id); err != nil {
 		s.respondError(c, err)
 		return

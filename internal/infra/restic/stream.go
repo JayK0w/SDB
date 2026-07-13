@@ -1,49 +1,16 @@
 package restic
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// lineWriter splits an arbitrary byte stream into lines and hands each
-// complete non-empty line to emit; flush releases a trailing unterminated
-// line. It lets RunWorker's chunked output feed the JSON decoder.
-type lineWriter struct {
-	emit func(string)
-	rem  []byte
-}
-
-func (w *lineWriter) Write(p []byte) (int, error) {
-	w.rem = append(w.rem, p...)
-	for {
-		i := bytes.IndexByte(w.rem, '\n')
-		if i < 0 {
-			break
-		}
-		line := strings.TrimRight(string(w.rem[:i]), "\r")
-		w.rem = w.rem[i+1:]
-		if line != "" {
-			w.emit(line)
-		}
-	}
-	return len(p), nil
-}
-
-func (w *lineWriter) flush() {
-	if len(w.rem) > 0 {
-		w.emit(string(w.rem))
-		w.rem = nil
-	}
-}
-
-// send forwards an event, tolerating a nil channel and giving up on
-// context cancellation so a stalled consumer cannot wedge the pipeline.
+// send : tolère un canal nil, abandonne si le contexte est annulé — un
+// consommateur bloqué ne doit pas geler le pipeline.
 func send(ctx context.Context, events chan<- domain.ProgressEvent, ev domain.ProgressEvent) {
 	if events == nil {
 		return
@@ -54,18 +21,17 @@ func send(ctx context.Context, events chan<- domain.ProgressEvent, ev domain.Pro
 	}
 }
 
-// resticMessage is the union of the JSON lines restic emits with --json
-// during backup and restore.
+// resticMessage : union des lignes JSON émises par restic --json.
 type resticMessage struct {
 	MessageType string `json:"message_type"`
 
-	// status (backup and restore)
+	// status (backup et restore)
 	PercentDone float64 `json:"percent_done"` // 0..1
 	TotalFiles  int64   `json:"total_files"`
 	FilesDone   int64   `json:"files_done"`
 	TotalBytes  int64   `json:"total_bytes"`
 	BytesDone   int64   `json:"bytes_done"`
-	// restore counters
+	// compteurs spécifiques restore
 	FilesRestored int64 `json:"files_restored"`
 	BytesRestored int64 `json:"bytes_restored"`
 
@@ -86,9 +52,8 @@ type resticMessage struct {
 	Item   string `json:"item"`
 }
 
-// decodeBackupLine turns one restic backup output line into a
-// ProgressEvent and, for the terminal summary message, a BackupSummary.
-// Percentages are normalised to 0..100 for the frontend.
+// decodeBackupLine : une ligne restic → ProgressEvent (+ BackupSummary sur
+// le message final). Pourcentages normalisés 0..100 pour le frontend.
 func decodeBackupLine(line string, backupID int64) (domain.ProgressEvent, *domain.BackupSummary) {
 	ev := domain.ProgressEvent{BackupID: backupID, Time: time.Now().UTC()}
 	var m resticMessage
@@ -140,10 +105,10 @@ func decodeBackupLine(line string, backupID int64) (domain.ProgressEvent, *domai
 	}
 }
 
-// decodeRestoreLine is the restore-side twin of decodeBackupLine; restore
-// reports files_restored/bytes_restored instead of files_done/bytes_done.
-func decodeRestoreLine(line string, backupID int64) domain.ProgressEvent {
-	ev := domain.ProgressEvent{BackupID: backupID, Time: time.Now().UTC()}
+// decodeRestoreLine : pendant restore de decodeBackupLine (compteurs
+// files_restored/bytes_restored ; le restore_id est estampillé plus haut).
+func decodeRestoreLine(line string) domain.ProgressEvent {
+	ev := domain.ProgressEvent{Time: time.Now().UTC()}
 	var m resticMessage
 	if !strings.HasPrefix(strings.TrimSpace(line), "{") || json.Unmarshal([]byte(line), &m) != nil {
 		ev.Type = domain.EventLog
@@ -180,35 +145,4 @@ func decodeRestoreLine(line string, backupID int64) domain.ProgressEvent {
 		ev.Message = line
 		return ev
 	}
-}
-
-// boundedBuffer keeps at most limit bytes (plus a truncation note), so
-// stderr capture cannot grow unbounded.
-type boundedBuffer struct {
-	limit   int
-	buf     []byte
-	dropped int
-}
-
-func newBoundedBuffer(limit int) *boundedBuffer { return &boundedBuffer{limit: limit} }
-
-func (b *boundedBuffer) Write(p []byte) (int, error) {
-	room := b.limit - len(b.buf)
-	if room > 0 {
-		if len(p) < room {
-			room = len(p)
-		}
-		b.buf = append(b.buf, p[:room]...)
-		b.dropped += len(p) - room
-	} else {
-		b.dropped += len(p)
-	}
-	return len(p), nil
-}
-
-func (b *boundedBuffer) String() string {
-	if b.dropped > 0 {
-		return string(b.buf) + "\n... (" + strconv.Itoa(b.dropped) + " bytes truncated)"
-	}
-	return string(b.buf)
 }

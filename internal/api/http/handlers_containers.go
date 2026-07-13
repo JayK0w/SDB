@@ -10,8 +10,7 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// handleHealth backs the frontend's "North Star" indicator: one call that
-// summarises whether SDB and its Docker daemon are operational.
+// handleHealth : alimente l'indicateur North Star (SDB + Docker en un appel).
 func (s *Server) handleHealth(c *gin.Context) {
 	pingCtx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
 	defer cancel()
@@ -51,13 +50,12 @@ func (s *Server) handleGetContainer(c *gin.Context) {
 	c.JSON(http.StatusOK, toContainerDTO(*container))
 }
 
-// handleMetricsWS upgrades the connection and plugs the client into the
-// hub. Authentication already happened in the middleware (token query
-// parameter accepted for browser WebSocket dials).
+// handleMetricsWS : upgrade et branchement du client sur le hub (auth déjà
+// faite par le middleware, ?token= accepté pour les navigateurs).
 func (s *Server) handleMetricsWS(c *gin.Context) {
 	conn, err := s.upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		// Upgrade already wrote the HTTP error response.
+		// Upgrade a déjà écrit la réponse d'erreur HTTP
 		s.logger.Warn("websocket upgrade failed", "error", err, "client", c.ClientIP())
 		return
 	}

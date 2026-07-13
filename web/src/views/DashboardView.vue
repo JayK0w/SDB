@@ -32,7 +32,7 @@ async function load(): Promise<void> {
 }
 
 onMounted(load)
-// Terminal events change container states (cold backups/restores): refresh.
+// un evenement terminal change l etat des conteneurs : refresh
 watch(() => events.historyDirty, load)
 
 async function cancelJob(job: JobProgress): Promise<void> {

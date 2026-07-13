@@ -1,7 +1,4 @@
-// Package docker implements domain.ContainerRuntime over the official
-// Docker SDK. The client honours DOCKER_HOST and friends when no explicit
-// host is configured; tcp:// endpoints require mTLS material (enforced
-// upstream by the configuration layer).
+// Package docker : implémente ContainerRuntime via le SDK officiel.
 package docker
 
 import (
@@ -17,16 +14,15 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// workerLabel marks containers spawned by SDB so they are excluded from
-// listings and identifiable for cleanup.
+// label des workers SDB : exclus des listings, identifiables au nettoyage
 const workerLabel = "sdb.worker"
 
 type Options struct {
-	Host        string // empty = SDK defaults (DOCKER_HOST or local socket)
+	Host        string // vide = socket local / DOCKER_HOST
 	TLSCACert   string
 	TLSCert     string
 	TLSKey      string
-	StopTimeout time.Duration // default grace period for container stops
+	StopTimeout time.Duration
 }
 
 type Runtime struct {
@@ -69,8 +65,7 @@ func (r *Runtime) Ping(ctx context.Context) error {
 
 func (r *Runtime) Close() error { return r.cli.Close() }
 
-// translate maps Docker SDK failures onto the domain sentinels so the
-// usecase layer never imports SDK types.
+// translate : projette les erreurs du SDK sur les sentinelles du domaine.
 func translate(err error) error {
 	switch {
 	case err == nil:

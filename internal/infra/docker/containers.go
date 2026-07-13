@@ -10,10 +10,10 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/standalone-docker-backup/sdb/internal/domain"
+	"github.com/standalone-docker-backup/sdb/internal/infra/streamio"
 )
 
-// maxHookOutput caps captured hook stdout/stderr; enough for a dump log,
-// small enough to store in backups_history.error_log.
+// plafond des sorties de hook (stockées dans error_log)
 const maxHookOutput = 64 << 10
 
 func (r *Runtime) List(ctx context.Context, all bool) ([]domain.Container, error) {
@@ -24,7 +24,7 @@ func (r *Runtime) List(ctx context.Context, all bool) ([]domain.Container, error
 	out := make([]domain.Container, 0, len(list))
 	for _, c := range list {
 		if c.Labels[workerLabel] != "" {
-			continue // SDB's own ephemeral workers
+			continue // workers SDB exclus
 		}
 		name := ""
 		if len(c.Names) > 0 {
@@ -45,7 +45,6 @@ func (r *Runtime) List(ctx context.Context, all bool) ([]domain.Container, error
 			Name:    name,
 			Image:   c.Image,
 			State:   domain.ContainerState(c.State),
-			Labels:  c.Labels,
 			Mounts:  mounts,
 			Created: time.Unix(c.Created, 0).UTC(),
 		})
@@ -80,7 +79,6 @@ func (r *Runtime) Get(ctx context.Context, id string) (*domain.Container, error)
 	}
 	if info.Config != nil {
 		c.Image = info.Config.Image
-		c.Labels = info.Config.Labels
 	}
 	return c, nil
 }
@@ -106,11 +104,9 @@ func (r *Runtime) Start(ctx context.Context, id string) error {
 	return nil
 }
 
-// Exec runs a hook command inside a running container. Note that Docker
-// has no server-side exec timeout: when the deadline fires, the attach
-// stream is closed and an error returned, but the process may keep
-// running inside the container — the hook failure policy decides how the
-// backup reacts.
+// Exec : hook dans un conteneur en marche. Attention : Docker n'a pas de
+// timeout d'exec côté serveur — au timeout on coupe le flux mais le
+// processus peut continuer ; la politique d'échec du hook tranche.
 func (r *Runtime) Exec(ctx context.Context, id string, cmd []string, timeout time.Duration) (*domain.ExecResult, error) {
 	if timeout <= 0 {
 		timeout = domain.DefaultHookTimeout
@@ -133,8 +129,8 @@ func (r *Runtime) Exec(ctx context.Context, id string, cmd []string, timeout tim
 	}
 	defer attach.Close()
 
-	stdout := newBoundedBuffer(maxHookOutput)
-	stderr := newBoundedBuffer(maxHookOutput)
+	stdout := streamio.NewBounded(maxHookOutput)
+	stderr := streamio.NewBounded(maxHookOutput)
 	done := make(chan error, 1)
 	go func() {
 		_, err := stdcopy.StdCopy(stdout, stderr, attach.Reader)

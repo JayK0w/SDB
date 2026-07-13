@@ -6,9 +6,8 @@ import (
 	"fmt"
 )
 
-// randomSecret returns a URL-safe random string built from n bytes of
-// entropy (~4n/3 characters). Used for generated Restic repository
-// passwords and the bootstrap admin password.
+// randomSecret : chaîne aléatoire URL-safe (~4n/3 caractères) — mots de
+// passe restic générés et mot de passe admin de bootstrap.
 func randomSecret(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {

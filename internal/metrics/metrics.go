@@ -1,7 +1,6 @@
-// Package metrics exposes SDB operational metrics in Prometheus format.
-// The collector implements domain.EventPublisher: it derives everything
-// from the same event stream the WebSocket hub receives, so the usecase
-// layer stays unaware of Prometheus.
+// Package metrics : exposition Prometheus. Le collecteur implémente
+// EventPublisher — même flux d'événements que le hub WebSocket, les
+// usecases ignorent Prometheus.
 package metrics
 
 import (
@@ -46,6 +45,7 @@ func New(version string) *Collector {
 			Name: "sdb_running_jobs",
 			Help: "Backups and restores currently in flight.",
 		}),
+		// alerte type : conteneur sans sauvegarde récente
 		lastSuccess: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "sdb_last_backup_success_timestamp_seconds",
 			Help: "Unix time of the last successful backup, per container (alert when stale).",
@@ -67,7 +67,7 @@ func New(version string) *Collector {
 	return c
 }
 
-// Publish never blocks: prometheus counters are lock-cheap in-memory ops.
+// Publish : ne bloque jamais (compteurs en mémoire).
 func (c *Collector) Publish(ev domain.ProgressEvent) {
 	if ev.Type == domain.EventSummary && ev.BackupID != 0 {
 		if ev.BytesDone > 0 {
@@ -87,7 +87,7 @@ func (c *Collector) Publish(ev domain.ProgressEvent) {
 		return
 	}
 
-	// Terminal transition.
+	// transition terminale
 	c.runningJobs.Dec()
 	status := string(ev.Status)
 	if ev.RestoreID != 0 {
@@ -102,7 +102,6 @@ func (c *Collector) Publish(ev domain.ProgressEvent) {
 	}
 }
 
-// Handler serves the registry in Prometheus exposition format.
 func (c *Collector) Handler() http.Handler {
 	return promhttp.HandlerFor(c.registry, promhttp.HandlerOpts{})
 }

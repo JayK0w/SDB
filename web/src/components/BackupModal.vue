@@ -17,8 +17,8 @@ const stopContainer = ref(false)
 const submitting = ref(false)
 const error = ref('')
 
-// Progressive disclosure: the essential form is two fields; everything
-// else lives behind this toggle.
+// divulgation progressive : 2 champs essentiels, le reste derriere
+// ce bouton
 const showAdvanced = ref(false)
 const selectedVolumes = ref<string[]>([])
 const preHookCmd = ref('')

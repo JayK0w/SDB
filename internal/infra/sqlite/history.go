@@ -143,10 +143,3 @@ func scanRecord(row rowScanner) (*domain.BackupRecord, error) {
 	}
 	return &rec, nil
 }
-
-func nullTime(t *time.Time) any {
-	if t == nil {
-		return nil
-	}
-	return fmtTime(*t)
-}

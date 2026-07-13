@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/standalone-docker-backup/sdb/internal/domain"
+	"github.com/standalone-docker-backup/sdb/internal/infra/streamio"
 )
 
 type Engine struct {
@@ -19,15 +20,12 @@ type Engine struct {
 
 var _ domain.SnapshotEngine = (*Engine)(nil)
 
-// New builds the engine. workerImage must have restic as its entrypoint
-// (the official restic/restic image does).
 func New(runtime domain.ContainerRuntime, workerImage string) *Engine {
 	return &Engine{runtime: runtime, image: workerImage}
 }
 
-// run executes one restic command in a fresh ephemeral worker and returns
-// its exit code. Infrastructure failures (pull, create, attach) come back
-// as the error; restic-level failures come back as a non-zero exit code.
+// run : une commande restic dans un worker neuf. Erreur = problème infra ;
+// échec restic = code de sortie non nul.
 func (e *Engine) run(ctx context.Context, storage *domain.StorageConfig, cmd []string,
 	extraMounts []domain.Mount, labels map[string]string, stdout, stderr io.Writer) (int, error) {
 
@@ -36,9 +34,7 @@ func (e *Engine) run(ctx context.Context, storage *domain.StorageConfig, cmd []s
 		return -1, err
 	}
 	spec := domain.WorkerSpec{
-		Image: e.image,
-		// Backend-specific flags (e.g. the sftp ssh command) ride along;
-		// restic parses flags anywhere on the command line.
+		Image:       e.image,
 		Cmd:         append(append([]string{}, cmd...), repo.opts...),
 		Env:         repo.env,
 		Files:       repo.files,
@@ -50,7 +46,7 @@ func (e *Engine) run(ctx context.Context, storage *domain.StorageConfig, cmd []s
 }
 
 func (e *Engine) EnsureRepository(ctx context.Context, storage *domain.StorageConfig) error {
-	// `cat config` is the cheapest authenticated way to probe a repo.
+	// `cat config` : sonde authentifiée la moins chère
 	exit, err := e.run(ctx, storage, []string{"cat", "config"}, nil, nil, io.Discard, io.Discard)
 	if err != nil {
 		return err
@@ -58,7 +54,7 @@ func (e *Engine) EnsureRepository(ctx context.Context, storage *domain.StorageCo
 	if exit == 0 {
 		return nil
 	}
-	stderr := newBoundedBuffer(16 << 10)
+	stderr := streamio.NewBounded(16 << 10)
 	exit, err = e.run(ctx, storage, []string{"init"}, nil, nil, io.Discard, stderr)
 	if err != nil {
 		return err
@@ -75,7 +71,7 @@ func (e *Engine) Snapshots(ctx context.Context, storage *domain.StorageConfig, t
 		cmd = append(cmd, "--tag", t)
 	}
 	var stdout bytes.Buffer
-	stderr := newBoundedBuffer(16 << 10)
+	stderr := streamio.NewBounded(16 << 10)
 	exit, err := e.run(ctx, storage, cmd, nil, nil, &stdout, stderr)
 	if err != nil {
 		return nil, err
@@ -129,7 +125,7 @@ func (e *Engine) Forget(ctx context.Context, storage *domain.StorageConfig, poli
 		cmd = append(cmd, "--prune")
 	}
 
-	stderr := newBoundedBuffer(16 << 10)
+	stderr := streamio.NewBounded(16 << 10)
 	exit, err := e.run(ctx, storage, cmd, nil, nil, io.Discard, stderr)
 	if err != nil {
 		return err
@@ -141,7 +137,7 @@ func (e *Engine) Forget(ctx context.Context, storage *domain.StorageConfig, poli
 }
 
 func (e *Engine) Check(ctx context.Context, storage *domain.StorageConfig) error {
-	stderr := newBoundedBuffer(32 << 10)
+	stderr := streamio.NewBounded(32 << 10)
 	exit, err := e.run(ctx, storage, []string{"check"}, nil, nil, io.Discard, stderr)
 	if err != nil {
 		return err

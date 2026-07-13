@@ -21,10 +21,9 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// RunWorker creates the ephemeral worker container, streams its
-// (demultiplexed) output to stdout/stderr and blocks until it exits. The
-// container is force-removed in every code path, including context
-// cancellation, so no worker ever leaks.
+// RunWorker : crée le worker éphémère, stream sa sortie démultiplexée et
+// bloque jusqu'à sa fin. Garanties : suppression forcée dans tous les cas
+// (y compris annulation), aucune écriture après le retour.
 func (r *Runtime) RunWorker(ctx context.Context, spec domain.WorkerSpec, stdout, stderr io.Writer) (int, error) {
 	if err := r.ensureImage(ctx, spec.Image); err != nil {
 		return -1, err
@@ -50,8 +49,7 @@ func (r *Runtime) RunWorker(ctx context.Context, spec domain.WorkerSpec, stdout,
 		return -1, translate(err)
 	}
 	defer func() {
-		// Removal must survive a canceled ctx (that is exactly when
-		// cleanup matters most).
+		// le nettoyage doit survivre à un ctx annulé
 		rmCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 		if err := r.cli.ContainerRemove(rmCtx, created.ID, container.RemoveOptions{Force: true}); err != nil && !errdefs.IsNotFound(err) {
@@ -86,9 +84,8 @@ func (r *Runtime) RunWorker(ctx context.Context, spec domain.WorkerSpec, stdout,
 	waitCh, errCh := r.cli.ContainerWait(ctx, created.ID, container.WaitConditionNotRunning)
 	select {
 	case err := <-errCh:
-		// Unblock the copy goroutine before returning so that no write to
-		// stdout/stderr can happen after RunWorker has returned (callers
-		// rely on this to close their event pipelines safely).
+		// débloque la goroutine de copie avant de rendre la main : aucune
+		// écriture ne doit survenir après le retour
 		attach.Close()
 		<-copied
 		return -1, translate(err)
@@ -103,9 +100,8 @@ func (r *Runtime) RunWorker(ctx context.Context, spec domain.WorkerSpec, stdout,
 	}
 }
 
-// copyFiles injects secret files into the created (not yet started)
-// worker as a tar stream: keys and service accounts never touch the host
-// filesystem or the container environment.
+// copyFiles : injecte les fichiers secrets (0600) via un tar, avant le
+// démarrage — jamais par le disque hôte ni l'environnement.
 func (r *Runtime) copyFiles(ctx context.Context, id string, files map[string][]byte) error {
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
@@ -123,7 +119,7 @@ func (r *Runtime) copyFiles(ctx context.Context, id string, files map[string][]b
 	for d := range dirs {
 		dirList = append(dirList, d)
 	}
-	sort.Strings(dirList) // parents before children
+	sort.Strings(dirList) // parents avant enfants
 
 	for _, d := range dirList {
 		if err := tw.WriteHeader(&tar.Header{
@@ -168,7 +164,7 @@ func toDockerMount(m domain.Mount) mount.Mount {
 		ReadOnly: m.ReadOnly,
 	}
 	if m.Type == domain.MountBind {
-		// Local repositories point at host paths that may not exist yet.
+		// dépôt local : le chemin hôte peut ne pas encore exister
 		out.BindOptions = &mount.BindOptions{CreateMountpoint: true}
 	}
 	return out

@@ -4,7 +4,7 @@ const MAX_DELAY_MS = 30000
 export type SocketStatus = 'connecting' | 'open' | 'closed'
 
 export interface ReconnectingSocketOptions {
-  /** Called on every (re)connect so a fresh token is used. */
+  /** appelée à chaque (re)connexion : token toujours frais */
   url: () => string
   onMessage: (msg: unknown) => void
   onStatus?: (status: SocketStatus) => void
@@ -14,11 +14,8 @@ export interface ReconnectingSocket {
   close: () => void
 }
 
-/**
- * createReconnectingSocket opens a WebSocket that reconnects forever with
- * exponential backoff and jitter (1s, 2s, 4s ... capped at 30s; a
- * successful connection resets the sequence).
- */
+// WebSocket à reconnexion infinie : backoff exponentiel avec jitter
+// (1s, 2s, 4s… plafonné à 30s), remis à zéro à chaque connexion réussie.
 export function createReconnectingSocket({
   url,
   onMessage,
@@ -31,7 +28,7 @@ export function createReconnectingSocket({
 
   function nextDelay(): number {
     const exp = Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** attempts)
-    // Full jitter on the upper half avoids reconnection stampedes.
+    // jitter : evite les tempetes de reconnexion
     return exp / 2 + Math.random() * (exp / 2)
   }
 
@@ -48,7 +45,7 @@ export function createReconnectingSocket({
       try {
         onMessage(JSON.parse(event.data as string))
       } catch {
-        /* ignore malformed frames */
+        /* trame malformee ignoree */
       }
     }
     ws.onclose = () => {
@@ -58,7 +55,7 @@ export function createReconnectingSocket({
       attempts += 1
     }
     ws.onerror = () => {
-      // onclose follows and drives the retry; just make sure it fires.
+      // onclose suit et pilote le retry
       ws?.close()
     }
   }

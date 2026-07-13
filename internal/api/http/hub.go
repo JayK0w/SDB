@@ -1,3 +1,5 @@
+// Package httpapi : couche de livraison — API REST (/api/v1, Gin) et hub
+// WebSocket. Traduit le transport (JSON, codes HTTP, JWT) vers les usecases.
 package httpapi
 
 import (
@@ -11,30 +13,24 @@ import (
 )
 
 const (
-	// writeWait bounds a single message write to a client.
-	writeWait = 10 * time.Second
-	// pongWait is how long a client may stay silent before being dropped;
-	// pings are sent at pingPeriod (< pongWait) to keep it alive.
-	pongWait   = 60 * time.Second
-	pingPeriod = 54 * time.Second
-	// maxMessageSize caps inbound frames: clients only listen.
-	maxMessageSize = 512
-	// clientBuffer is each client's send queue; a client lagging behind
-	// this many events is dropped instead of slowing everyone down.
-	clientBuffer = 64
+	writeWait      = 10 * time.Second // borne une écriture
+	pongWait       = 60 * time.Second // silence max avant déconnexion
+	pingPeriod     = 54 * time.Second // < pongWait
+	maxMessageSize = 512              // les clients n'envoient rien
+	clientBuffer   = 64               // file par client avant éviction
 )
 
-// Hub fans ProgressEvents out to every connected WebSocket client. It
-// implements domain.EventPublisher: Publish never blocks — when the hub
-// or one client cannot keep up, the event (or the client) is dropped
-// rather than stalling a running backup goroutine.
+// Hub : diffuse les ProgressEvents à tous les clients WebSocket.
+// Publish ne bloque JAMAIS : hub saturé → événement abandonné, client
+// lent → client évincé. L'état qui fait foi est en base, le flux n'est
+// que de la télémétrie.
 type Hub struct {
 	logger     *slog.Logger
 	register   chan *client
 	unregister chan *client
 	broadcast  chan domain.ProgressEvent
 	clients    map[*client]struct{}
-	done       chan struct{} // closed when Run exits
+	done       chan struct{} // fermé à la sortie de Run
 }
 
 func NewHub(logger *slog.Logger) *Hub {
@@ -53,8 +49,8 @@ func NewHub(logger *slog.Logger) *Hub {
 
 var _ domain.EventPublisher = (*Hub)(nil)
 
-// Run owns the clients map; all mutations happen on this single goroutine,
-// which is what makes the hub lock-free and non-blocking for publishers.
+// Run : goroutine unique propriétaire de la map clients — pas de verrou,
+// pas de blocage côté publieurs.
 func (h *Hub) Run(ctx context.Context) {
 	defer close(h.done)
 	for {
@@ -77,7 +73,7 @@ func (h *Hub) Run(ctx context.Context) {
 				select {
 				case c.send <- ev:
 				default:
-					// Slow consumer: drop the client, never the backup.
+					// client lent : évincé, jamais attendu
 					h.logger.Warn("dropping slow websocket client")
 					delete(h.clients, c)
 					close(c.send)
@@ -87,13 +83,10 @@ func (h *Hub) Run(ctx context.Context) {
 	}
 }
 
-// Publish implements domain.EventPublisher and never blocks: if the hub
-// itself is congested the event is dropped (the authoritative state lives
-// in backups_history; the stream is best-effort telemetry).
 func (h *Hub) Publish(ev domain.ProgressEvent) {
 	select {
 	case h.broadcast <- ev:
-	default:
+	default: // hub saturé : on abandonne l'événement
 	}
 }
 
@@ -112,15 +105,13 @@ func (h *Hub) remove(c *client) {
 	}
 }
 
-// client is one WebSocket subscriber with its buffered send queue.
 type client struct {
 	hub  *Hub
 	conn *websocket.Conn
 	send chan domain.ProgressEvent
 }
 
-// writePump serialises events to the socket and keeps the connection
-// alive with pings. It is the only goroutine writing to the connection.
+// writePump : seule goroutine à écrire sur la connexion ; pings de survie.
 func (c *client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
@@ -147,8 +138,7 @@ func (c *client) writePump() {
 	}
 }
 
-// readPump drains (and discards) inbound frames so pongs are processed
-// and closed connections are detected promptly.
+// readPump : draine les trames entrantes (pongs) et détecte la fermeture.
 func (c *client) readPump() {
 	defer func() {
 		c.hub.remove(c)

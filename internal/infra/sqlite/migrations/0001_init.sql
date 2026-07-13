@@ -7,8 +7,8 @@ CREATE TABLE users (
     updated_at    TEXT NOT NULL
 );
 
--- credentials_enc and restic_password_enc hold AES-256-GCM blobs sealed
--- under the SDB master key; plaintext secrets never touch the disk.
+-- credentials_enc / restic_password_enc : blobs AES-256-GCM scellés sous
+-- la clé maître — aucun secret en clair sur disque
 CREATE TABLE storage_configs (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     name                TEXT NOT NULL UNIQUE,

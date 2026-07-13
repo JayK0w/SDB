@@ -2,14 +2,13 @@ package domain
 
 import "time"
 
-// RestoreRecord is one row of restores_history: a single restore of one
-// snapshot into one volume. It reuses BackupStatus for its lifecycle.
+// RestoreRecord : une ligne de restores_history.
 type RestoreRecord struct {
 	ID            int64
 	StorageID     int64
 	SnapshotID    string
 	TargetVolume  string
-	ContainerID   string // container stopped during the restore, if any
+	ContainerID   string // conteneur arrêté pendant la restauration, si demandé
 	ContainerName string
 	Status        BackupStatus
 	StartTime     time.Time
@@ -17,7 +16,7 @@ type RestoreRecord struct {
 	ErrorLog      string
 }
 
-// RestoreFilter narrows restores_history queries; zero values mean "any".
+// RestoreFilter : filtre de restores_history, zéro = ignoré.
 type RestoreFilter struct {
 	TargetVolume string
 	StorageID    int64

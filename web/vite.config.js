@@ -13,9 +13,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // changeOrigin stays false on purpose: the backend's WebSocket
-      // CheckOrigin compares the Origin header with the Host header, so
-      // the original Host must be preserved through the dev proxy.
+      // changeOrigin reste false : le CheckOrigin WebSocket du backend
+      // compare Origin et Host — le proxy doit preserver le Host
+      // d origine.
       '/api': {
         target: 'http://127.0.0.1:8080',
         changeOrigin: false,

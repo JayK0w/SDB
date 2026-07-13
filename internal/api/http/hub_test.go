@@ -53,14 +53,14 @@ func TestHubDropsSlowConsumerWithoutBlocking(t *testing.T) {
 	go hub.Run(ctx)
 
 	fast := &client{hub: hub, send: make(chan domain.ProgressEvent, 8)}
-	slow := &client{hub: hub, send: make(chan domain.ProgressEvent, 1)} // fills after one event
+	slow := &client{hub: hub, send: make(chan domain.ProgressEvent, 1)} // sature apres un evenement
 	hub.add(fast)
 	hub.add(slow)
 
 	hub.Publish(domain.ProgressEvent{BackupID: 1, Type: domain.EventLog, Message: "one"})
 	hub.Publish(domain.ProgressEvent{BackupID: 1, Type: domain.EventLog, Message: "two"})
 
-	// The fast client sees both events.
+	// le client rapide recoit les deux evenements
 	if ev, _ := recvEvent(t, fast.send); ev.Message != "one" {
 		t.Fatalf("fast client first event = %q, want one", ev.Message)
 	}
@@ -68,8 +68,8 @@ func TestHubDropsSlowConsumerWithoutBlocking(t *testing.T) {
 		t.Fatalf("fast client second event = %q, want two", ev.Message)
 	}
 
-	// The slow client got the first event, then was dropped: its channel
-	// must be closed rather than left blocking the hub.
+	// le client lent a recu le premier puis a ete evince : son canal
+	// doit etre ferme, pas laisse bloquer le hub
 	if ev, ok := recvEvent(t, slow.send); !ok || ev.Message != "one" {
 		t.Fatalf("slow client first event = %+v (ok=%v)", ev, ok)
 	}
@@ -91,7 +91,7 @@ func TestHubUnregisterClosesClient(t *testing.T) {
 	if _, ok := recvEvent(t, c.send); ok {
 		t.Fatal("send channel should be closed after unregister")
 	}
-	// Publishing afterwards must not panic or block.
+	// publier ensuite ne doit ni paniquer ni bloquer
 	hub.Publish(domain.ProgressEvent{Type: domain.EventLog, Message: "after"})
 }
 
@@ -107,7 +107,7 @@ func TestHubShutdownClosesEverything(t *testing.T) {
 	if _, ok := recvEvent(t, c.send); ok {
 		t.Fatal("send channel should be closed on hub shutdown")
 	}
-	// add/remove after shutdown must not deadlock.
+	// add/remove apres arret : pas de deadlock
 	late := &client{hub: hub, send: make(chan domain.ProgressEvent, 1)}
 	hub.add(late)
 	hub.remove(late)

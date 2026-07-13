@@ -105,9 +105,7 @@ func TestRestoreFailureStillRestartsContainer(t *testing.T) {
 func TestRestoreConflictOnSameVolume(t *testing.T) {
 	svc, _, engine, history, _ := newRestoreFixture(t)
 	release := make(chan struct{})
-	// Reuse the backup hook to block: Restore has no fn hook, emulate via
-	// a slow engine by blocking in Restore through restoreErr? The fake
-	// records then returns immediately, so use a blocking variant.
+	// moteur bloquant : garde le premier restore en cours
 	engine.restoreFn = func(ctx context.Context) error {
 		<-release
 		return nil

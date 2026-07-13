@@ -6,7 +6,7 @@ const POLL_INTERVAL_MS = 30000
 
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-// Backend + Docker reachability, polled for the North Star indicator.
+// Sante backend + Docker, sondee pour le North Star.
 export const useHealthStore = defineStore('health', {
   state: () => ({
     status: 'unknown' as 'ok' | 'degraded' | 'down' | 'unknown',

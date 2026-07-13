@@ -42,7 +42,7 @@ watch(storageId, async (id) => {
   if (!id) return
   snapshotsLoading.value = true
   try {
-    // Only this container's snapshots, thanks to the container:<name> tag.
+    // seulement les snapshots de CE conteneur (tag container:<nom>)
     snapshots.value = await api.storage.snapshots(id, [`container:${props.container.name}`])
     if (snapshots.value.length > 0) snapshotId.value = snapshots.value[0]!.id
   } catch (e) {

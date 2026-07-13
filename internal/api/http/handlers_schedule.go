@@ -82,7 +82,7 @@ func (s *Server) handleDeleteSchedule(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// handleRunSchedule fires a schedule immediately (202 + backup record).
+// handleRunSchedule : déclenchement manuel immédiat (202 + enregistrement).
 func (s *Server) handleRunSchedule(c *gin.Context) {
 	id, err := pathID(c)
 	if err != nil {

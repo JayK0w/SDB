@@ -9,9 +9,8 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-// StorageService manages Restic repository targets. Creating a storage
-// also initialises (or verifies) the repository, so a storage that exists
-// in SDB is always usable.
+// StorageService : un stockage présent dans SDB est toujours utilisable —
+// la création initialise (ou vérifie) le dépôt restic.
 type StorageService struct {
 	storages domain.StorageRepository
 	engine   domain.SnapshotEngine
@@ -25,15 +24,12 @@ func NewStorageService(storages domain.StorageRepository, engine domain.Snapshot
 	return &StorageService{storages: storages, engine: engine, logger: logger}
 }
 
-// Create persists the configuration and initialises the Restic repository.
-// When no repository password is supplied, a strong random one is
-// generated (the spec mandates generated passwords; users never have to
-// invent one). If the repository cannot be initialised the configuration
-// is rolled back so no unusable storage lingers.
+// Create : mot de passe restic généré si absent, dépôt initialisé, et
+// rollback de la ligne si l'init échoue (pas de stockage inutilisable).
 func (s *StorageService) Create(ctx context.Context, cfg *domain.StorageConfig) error {
 	cfg.ID = 0
 	if cfg.ResticPassword == "" {
-		pw, err := randomSecret(32) // 43 characters
+		pw, err := randomSecret(32) // 43 caractères
 		if err != nil {
 			return err
 		}
@@ -65,10 +61,8 @@ func (s *StorageService) List(ctx context.Context) ([]domain.StorageConfig, erro
 	return s.storages.List(ctx)
 }
 
-// Update modifies a storage configuration. The repository password is
-// immutable: Restic derives the repository keys from it, so swapping it
-// here would silently lock the repository out. An empty password in the
-// input means "keep the current one".
+// Update : le mot de passe du dépôt est IMMUABLE (restic en dérive ses
+// clés — le changer verrouillerait le dépôt) ; vide = conserver l'actuel.
 func (s *StorageService) Update(ctx context.Context, cfg *domain.StorageConfig) error {
 	existing, err := s.storages.GetByID(ctx, cfg.ID)
 	if err != nil {
@@ -86,15 +80,12 @@ func (s *StorageService) Update(ctx context.Context, cfg *domain.StorageConfig) 
 	return s.storages.Update(ctx, cfg)
 }
 
-// Delete removes a storage configuration. The repository data itself is
-// left untouched; the repository layer returns ErrConflict while backup
-// history still references the storage.
+// Delete : le dépôt restic lui-même n'est pas effacé ; ErrConflict si
+// l'historique référence encore ce stockage.
 func (s *StorageService) Delete(ctx context.Context, id int64) error {
 	return s.storages.Delete(ctx, id)
 }
 
-// Snapshots lists the snapshots stored in a repository, optionally
-// filtered by tags (e.g. "container:postgres").
 func (s *StorageService) Snapshots(ctx context.Context, id int64, tags []string) ([]domain.Snapshot, error) {
 	cfg, err := s.storages.GetByID(ctx, id)
 	if err != nil {
@@ -103,7 +94,6 @@ func (s *StorageService) Snapshots(ctx context.Context, id int64, tags []string)
 	return s.engine.Snapshots(ctx, cfg, tags)
 }
 
-// CheckIntegrity runs an on-demand restic check against one repository.
 func (s *StorageService) CheckIntegrity(ctx context.Context, id int64) error {
 	cfg, err := s.storages.GetByID(ctx, id)
 	if err != nil {
