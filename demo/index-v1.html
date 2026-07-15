@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ma Super App — v1.0</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #064e3b 0%, #022c22 100%);
+      color: #ecfdf5;
+    }
+    .card {
+      text-align: center;
+      padding: 4rem 5rem;
+      border: 1px solid rgba(52, 211, 153, 0.3);
+      border-radius: 1.5rem;
+      background: rgba(6, 78, 59, 0.5);
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.4);
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.35rem 1rem;
+      border-radius: 999px;
+      background: rgba(52, 211, 153, 0.15);
+      border: 1px solid rgba(52, 211, 153, 0.4);
+      color: #6ee7b7;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+    h1 { font-size: 3rem; margin-bottom: 0.75rem; }
+    .version { font-size: 5rem; font-weight: 800; color: #34d399; margin: 1rem 0; }
+    p { color: #a7f3d0; font-size: 1.1rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">✓ Production stable</div>
+    <h1>🚀 Ma Super App</h1>
+    <div class="version">v1.0</div>
+    <p>Données critiques servies depuis le volume Docker <strong>demo-web-data</strong></p>
+  </div>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ma Super App — v2.0 ⚠️</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: linear-gradient(135deg, #7f1d1d 0%, #450a0a 100%);
+      color: #fef2f2;
+    }
+    .card {
+      text-align: center;
+      padding: 4rem 5rem;
+      border: 1px solid rgba(248, 113, 113, 0.4);
+      border-radius: 1.5rem;
+      background: rgba(127, 29, 29, 0.5);
+      box-shadow: 0 25px 60px rgba(0, 0, 0, 0.5);
+    }
+    .badge {
+      display: inline-block;
+      padding: 0.35rem 1rem;
+      border-radius: 999px;
+      background: rgba(248, 113, 113, 0.15);
+      border: 1px solid rgba(248, 113, 113, 0.5);
+      color: #fca5a5;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+      animation: blink 1s infinite;
+    }
+    @keyframes blink { 50% { opacity: 0.4; } }
+    h1 { font-size: 3rem; margin-bottom: 0.75rem; }
+    .version { font-size: 5rem; font-weight: 800; color: #f87171; margin: 1rem 0; }
+    p { color: #fecaca; font-size: 1.1rem; }
+    .oops { margin-top: 1.5rem; font-size: 0.95rem; color: #fca5a5; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">⚠ Déploiement défectueux</div>
+    <h1>💥 Ma Super App</h1>
+    <div class="version">v2.0</div>
+    <p>Oups… cette mise en production a <strong>corrompu les données</strong> !</p>
+    <p class="oops">Heureusement, un snapshot SDB a été pris juste avant 😌</p>
+  </div>
+</body>
+</html>
