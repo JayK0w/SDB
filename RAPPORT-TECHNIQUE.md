@@ -1,7 +1,7 @@
 # Rapport technique — SDB (Standalone Docker Backup)
 
-**Projet :** outil autonome de sauvegarde et de restauration des volumes Docker
-**Version :** 0.2 — **Date :** juillet 2026
+**Projet :** outil autonome de sauvegarde et de restauration des volumes Docker\
+**Version :** 0.2 — **Date :** juillet 2026\
 **Stack :** Go 1.25 · Vue 3 / TypeScript · restic · SQLite · Docker
 
 ---
