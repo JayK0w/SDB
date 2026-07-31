@@ -61,13 +61,18 @@ func TestScheduleRunNowFiresBackup(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec, err := svc.RunNow(ctx, sched.ID)
+	actor := domain.Actor{UserID: 7, Name: "alice"}
+	rec, err := svc.RunNow(ctx, sched.ID, actor)
 	if err != nil {
 		t.Fatalf("RunNow() error: %v", err)
 	}
 	final := waitTerminal(t, history, rec.ID)
 	if final.Status != domain.BackupSuccess {
 		t.Fatalf("scheduled run status = %s (%s)", final.Status, final.ErrorLog)
+	}
+	// déclenchement manuel : l'humain doit être attribué, pas le planificateur
+	if final.TriggeredBy != actor {
+		t.Fatalf("TriggeredBy = %+v, want the human actor %+v", final.TriggeredBy, actor)
 	}
 
 	stored, _ := schedules.GetByID(ctx, sched.ID)

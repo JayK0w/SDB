@@ -21,6 +21,7 @@ type Collector struct {
 	bytesTotal    prometheus.Counter
 	runningJobs   prometheus.Gauge
 	lastSuccess   *prometheus.GaugeVec
+	missedRuns    *prometheus.CounterVec
 }
 
 var _ domain.EventPublisher = (*Collector)(nil)
@@ -50,6 +51,12 @@ func New(version string) *Collector {
 			Name: "sdb_last_backup_success_timestamp_seconds",
 			Help: "Unix time of the last successful backup, per container (alert when stale).",
 		}, []string{"container"}),
+		// alerte type : SDB est reste arrete au-dela d'une fenetre planifiee.
+		// Sans ce compteur, le trou est invisible.
+		missedRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "sdb_schedule_missed_runs_total",
+			Help: "Scheduled windows that elapsed while SDB was down, per schedule (alert on any increase).",
+		}, []string{"schedule", "container"}),
 	}
 
 	info := prometheus.NewGauge(prometheus.GaugeOpts{
@@ -60,7 +67,7 @@ func New(version string) *Collector {
 	info.Set(1)
 
 	registry.MustRegister(
-		c.backupsTotal, c.restoresTotal, c.bytesTotal, c.runningJobs, c.lastSuccess, info,
+		c.backupsTotal, c.restoresTotal, c.bytesTotal, c.runningJobs, c.lastSuccess, c.missedRuns, info,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -104,4 +111,12 @@ func (c *Collector) Publish(ev domain.ProgressEvent) {
 
 func (c *Collector) Handler() http.Handler {
 	return promhttp.HandlerFor(c.registry, promhttp.HandlerOpts{})
+}
+
+// RecordMissedRuns : echeances tombees pendant un arret de SDB.
+func (c *Collector) RecordMissedRuns(schedule, container string, missed int) {
+	if missed <= 0 {
+		return
+	}
+	c.missedRuns.WithLabelValues(schedule, container).Add(float64(missed))
 }

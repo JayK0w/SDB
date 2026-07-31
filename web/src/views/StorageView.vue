@@ -98,6 +98,13 @@ async function remove(storage: Storage): Promise<void> {
             <p class="font-medium text-zinc-100">
               {{ s.name }}
               <span class="ml-2 rounded-full border border-zinc-700 px-2 py-0.5 text-xs uppercase text-zinc-400">{{ s.type }}</span>
+              <span
+                v-if="s.append_only"
+                title="Dépôt append-only : SDB refuse la rétention et la suppression de cette cible."
+                class="ml-2 rounded-full border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-300"
+              >
+                append-only
+              </span>
             </p>
             <p class="mt-1 truncate font-mono text-xs text-zinc-500">{{ s.endpoint }}</p>
             <p v-if="s.credential_keys.length" class="mt-1 text-xs text-zinc-600">

@@ -46,6 +46,7 @@ type Server struct {
 	svc          Services
 	upgrader     websocket.Upgrader
 	loginLimiter *rateLimiter
+	writeLimit   *rateLimiter
 	http         *http.Server
 }
 
@@ -60,6 +61,8 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 		tokens:       NewTokenManager(opts.JWTSecret, opts.TokenTTL),
 		svc:          svc,
 		loginLimiter: newRateLimiter(10, time.Minute),
+		// large devant un usage humain, étroit devant une boucle
+		writeLimit: newRateLimiter(120, time.Minute),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  1024,
 			WriteBufferSize: 1024,
@@ -71,12 +74,14 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(gin.Recovery(), s.requestLogger())
+	r.Use(gin.Recovery(), s.requestLogger(), s.securityHeaders(), limitBody())
 
 	api := r.Group("/api/v1")
 	api.POST("/auth/login", s.handleLogin)
 
-	authed := api.Group("", s.authRequired())
+	// writeLimiter après authRequired : il préfère l'ID utilisateur à l'IP
+	// comme clé, sinon tout un réseau NATé partage le même compteur.
+	authed := api.Group("", s.authRequired(), s.writeLimiter())
 	{
 		authed.GET("/health", s.handleHealth)
 		authed.GET("/containers", s.handleListContainers)
@@ -91,8 +96,7 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 		authed.GET("/backups/history", s.handleHistory)
 		authed.GET("/backups/history/:id", s.handleHistoryRecord)
 
-		authed.POST("/restores", s.handleStartRestore)
-		authed.DELETE("/restores/:id", s.handleCancelRestore)
+		// lecture seule : tout compte authentifié
 		authed.GET("/restores/history", s.handleRestoreHistory)
 
 		authed.GET("/schedules", s.handleListSchedules)
@@ -109,6 +113,13 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 
 		admin := authed.Group("", s.adminRequired())
 		{
+			// Une restauration écrase des données de production, et un
+			// clonage matérialise une copie complète : opérations
+			// privilégiées, jamais ouvertes au rôle `user`.
+			admin.POST("/restores", s.handleStartRestore)
+			admin.DELETE("/restores/:id", s.handleCancelRestore)
+			admin.GET("/restores/clone-compose", s.handleCloneCompose)
+
 			admin.POST("/storage", s.handleCreateStorage)
 			admin.PUT("/storage/:id", s.handleUpdateStorage)
 			admin.DELETE("/storage/:id", s.handleDeleteStorage)

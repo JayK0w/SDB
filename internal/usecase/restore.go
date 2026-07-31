@@ -13,13 +13,23 @@ import (
 )
 
 type RestoreRequest struct {
-	StorageID    int64
-	SnapshotID   string
+	StorageID  int64
+	SnapshotID string
+	// SourceVolume : volume tel qu'archivé dans le snapshot. Vide = même
+	// que TargetVolume (restauration en place). Le renseigner avec une
+	// cible différente clone le volume : l'original n'est pas touché et
+	// les deux services peuvent tourner en parallèle.
+	SourceVolume string
 	TargetVolume string
 	// StopContainer : conteneur à arrêter pendant la restauration (une
 	// appli qui écrit pendant la réécriture corromprait le volume) ;
-	// redémarré ensuite quoi qu'il arrive.
+	// redémarré ensuite quoi qu'il arrive. Inutile en clonage : le
+	// conteneur source n'écrit pas dans le volume cible.
 	StopContainer string
+	// TriggeredBy : renseigné par la couche de livraison depuis le JWT.
+	// Une restauration écrase des données de production : l'historique doit
+	// nommer son auteur.
+	TriggeredBy domain.Actor
 }
 
 // RestoreService : restaurations asynchrones, une à la fois par volume
@@ -69,6 +79,13 @@ func (s *RestoreService) Start(ctx context.Context, req RestoreRequest) (*domain
 	if req.SnapshotID == "" || req.TargetVolume == "" {
 		return nil, fmt.Errorf("%w: snapshot id and target volume are required", domain.ErrInvalidInput)
 	}
+	// le nom finit en source de montage du worker : le contraindre ici
+	if !domain.ValidVolumeName(req.TargetVolume) {
+		return nil, fmt.Errorf("%w: %q is not a valid docker volume name", domain.ErrInvalidInput, req.TargetVolume)
+	}
+	if req.SourceVolume != "" && !domain.ValidVolumeName(req.SourceVolume) {
+		return nil, fmt.Errorf("%w: %q is not a valid docker volume name", domain.ErrInvalidInput, req.SourceVolume)
+	}
 	storage, err := s.storages.GetByID(ctx, req.StorageID)
 	if err != nil {
 		return nil, fmt.Errorf("loading storage config: %w", err)
@@ -83,8 +100,10 @@ func (s *RestoreService) Start(ctx context.Context, req RestoreRequest) (*domain
 	rec := &domain.RestoreRecord{
 		StorageID:    storage.ID,
 		SnapshotID:   req.SnapshotID,
+		SourceVolume: req.SourceVolume,
 		TargetVolume: req.TargetVolume,
 		Status:       domain.BackupPending,
+		TriggeredBy:  req.TriggeredBy,
 		StartTime:    time.Now().UTC(),
 	}
 	if target != nil {
@@ -160,10 +179,16 @@ func (s *RestoreService) GetRecord(ctx context.Context, id int64) (*domain.Resto
 }
 
 func (s *RestoreService) execute(ctx context.Context, rec *domain.RestoreRecord, storage *domain.StorageConfig, target *domain.Container) {
-	log := s.logger.With("restore_id", rec.ID, "volume", rec.TargetVolume, "snapshot", rec.SnapshotID, "storage", storage.Name)
+	log := s.logger.With("restore_id", rec.ID, "volume", rec.TargetVolume, "snapshot", rec.SnapshotID,
+		"storage", storage.Name, "actor", rec.TriggeredBy.String())
+	msg := fmt.Sprintf("restore of volume %s from snapshot %s started", rec.TargetVolume, rec.SnapshotID)
+	if rec.IsClone() {
+		log = log.With("source_volume", rec.SourceVolume)
+		msg = fmt.Sprintf("clone of volume %s into %s from snapshot %s started",
+			rec.SourceVolume, rec.TargetVolume, rec.SnapshotID)
+	}
 	log.Info("restore started")
-	s.transition(ctx, rec, domain.BackupRunning,
-		fmt.Sprintf("restore of volume %s from snapshot %s started", rec.TargetVolume, rec.SnapshotID))
+	s.transition(ctx, rec, domain.BackupRunning, msg)
 
 	stoppedByUs := false
 	if target != nil && target.IsRunning() {
@@ -187,7 +212,11 @@ func (s *RestoreService) execute(ctx context.Context, rec *domain.RestoreRecord,
 			s.publisher.Publish(ev)
 		}
 	}()
-	restoreErr := s.engine.Restore(ctx, storage, rec.SnapshotID, rec.TargetVolume, events)
+	restoreErr := s.engine.Restore(ctx, storage, domain.RestoreSpec{
+		SnapshotID:   rec.SnapshotID,
+		SourceVolume: rec.SourceVolume,
+		TargetVolume: rec.TargetVolume,
+	}, events)
 	close(events)
 	fwd.Wait()
 

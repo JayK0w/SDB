@@ -13,8 +13,10 @@ import (
 
 	httpapi "github.com/standalone-docker-backup/sdb/internal/api/http"
 	"github.com/standalone-docker-backup/sdb/internal/config"
+	"github.com/standalone-docker-backup/sdb/internal/domain"
 	"github.com/standalone-docker-backup/sdb/internal/infra/crypto"
 	"github.com/standalone-docker-backup/sdb/internal/infra/docker"
+	"github.com/standalone-docker-backup/sdb/internal/infra/notify"
 	"github.com/standalone-docker-backup/sdb/internal/infra/restic"
 	"github.com/standalone-docker-backup/sdb/internal/infra/sqlite"
 	"github.com/standalone-docker-backup/sdb/internal/metrics"
@@ -105,7 +107,8 @@ func run() error {
 
 	userRepo := sqlite.NewUserRepo(db)
 	storageRepo := sqlite.NewStorageRepo(db, cipher)
-	engine := restic.New(runtime, cfg.Docker.WorkerImage)
+	engine := restic.New(runtime, cfg.Docker.WorkerImage,
+		restic.WithReadDataSubset(cfg.Maintenance.ReadDataSubset))
 
 	// --- Usecases ---
 	authSvc := usecase.NewAuthService(userRepo, hasher, logger)
@@ -133,9 +136,34 @@ func run() error {
 	collector := metrics.New(version)
 	publisher := usecase.MultiPublisher{hub, collector}
 
-	backupSvc := usecase.NewBackupService(runtime, engine, storageRepo, history, publisher, logger)
+	// alertes sortantes : troisième consommateur du même flux, ne retient
+	// que les fins en échec. nil si aucune URL n'est configurée.
+	alerts := notify.New(cfg.Maintenance.AlertWebhook, cfg.Maintenance.AlertTimeout, logger)
+	if alerts != nil {
+		publisher = append(publisher, alerts)
+		logger.Info("outbound alerting enabled")
+	} else {
+		logger.Warn("no alert webhook configured; backup failures are only visible in /metrics and logs")
+	}
+
+	backupSvc := usecase.NewBackupService(runtime, engine, storageRepo, history, publisher, logger,
+		usecase.WithStrictPartial(cfg.Maintenance.StrictPartial))
 	restoreSvc := usecase.NewRestoreService(runtime, engine, storageRepo, restoreHistory, publisher, logger)
-	schedulerSvc := usecase.NewSchedulerService(sqlite.NewScheduleRepo(db), backupSvc, logger)
+
+	// preuve de restaurabilite : extrait reellement le dernier snapshot dans
+	// un volume jetable. Les echecs partent par le meme canal d'alerte que
+	// n'importe quel run rate.
+	verifySvc := usecase.NewVerificationService(runtime, engine, storageRepo, restoreHistory, publisher, logger)
+	if cfg.Maintenance.VerifyInterval > 0 {
+		go verifySvc.Schedule(ctx, cfg.Maintenance.VerifyInterval)
+	} else {
+		logger.Warn("restore verification disabled; nothing proves the backups are restorable (set SDB_VERIFY_INTERVAL)")
+	}
+	schedulerSvc := usecase.NewSchedulerService(sqlite.NewScheduleRepo(db), backupSvc, logger,
+		usecase.WithCatchUp(cfg.Maintenance.ScheduleCatchUp),
+		usecase.WithMissedRunHandler(func(sched domain.BackupSchedule, missed int) {
+			collector.RecordMissedRuns(sched.Name, sched.ContainerName, missed)
+		}))
 	go func() {
 		if err := schedulerSvc.Run(ctx); err != nil {
 			logger.Error("backup scheduler stopped", "error", err)
@@ -179,6 +207,10 @@ func run() error {
 	}
 	if err := restoreSvc.Close(closeCtx); err != nil {
 		logger.Warn("restore jobs did not drain in time", "error", err)
+	}
+	// après les services : les alertes des derniers rollbacks doivent partir
+	if err := alerts.Close(closeCtx); err != nil {
+		logger.Warn("pending alerts were not delivered", "error", err)
 	}
 
 	logger.Info("shutdown complete")

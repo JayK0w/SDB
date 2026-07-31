@@ -20,3 +20,7 @@ coverage.out
 node_modules/
 web/dist/*
 !web/dist/.gitkeep
+presentation/node_modules/
+
+# Analyse locale graphify (graphe + cache) : artefact regenerable
+graphify-out/

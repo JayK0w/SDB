@@ -1,12 +1,3 @@
-# Déploiement durci de SDB.
-#
-# Avant le premier démarrage, générer les secrets :
-#   mkdir -p secrets
-#   openssl rand -hex 32 > secrets/sdb_master_key
-#   openssl rand -hex 32 > secrets/sdb_jwt_secret
-#
-# Puis :  docker compose up -d --build
-# Mot de passe admin initial : docker compose logs sdb | grep "initial admin"
 
 services:
   sdb:

@@ -18,7 +18,9 @@ func (s *Server) handleStartBackup(c *gin.Context) {
 		s.respondError(c, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err))
 		return
 	}
-	rec, err := s.svc.Backups.Start(c.Request.Context(), req.toDomain())
+	dom := req.toDomain()
+	dom.TriggeredBy = currentActor(c)
+	rec, err := s.svc.Backups.Start(c.Request.Context(), dom)
 	if err != nil {
 		s.respondError(c, err)
 		return
@@ -95,12 +97,26 @@ func (s *Server) handleStartRestore(c *gin.Context) {
 		s.respondError(c, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err))
 		return
 	}
-	rec, err := s.svc.Restores.Start(c.Request.Context(), req.toDomain())
+	dom := req.toDomain()
+	dom.TriggeredBy = currentActor(c)
+	rec, err := s.svc.Restores.Start(c.Request.Context(), dom)
 	if err != nil {
 		s.respondError(c, err)
 		return
 	}
 	c.JSON(http.StatusAccepted, toRestoreDTO(*rec))
+}
+
+// handleCloneCompose : docker-compose.yml pour lancer un second service sur
+// le volume clone, a cote de l original qui continue de tourner.
+func (s *Server) handleCloneCompose(c *gin.Context) {
+	yaml, err := s.svc.Restores.CloneCompose(c.Request.Context(),
+		c.Query("container_id"), c.Query("source_volume"), c.Query("target_volume"))
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"compose": yaml})
 }
 
 func (s *Server) handleCancelRestore(c *gin.Context) {

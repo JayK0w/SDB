@@ -6,6 +6,7 @@ import { formatBytes, formatDate, formatDuration, shortID } from '@/lib/format'
 import type { BackupRecord, RestoreRecord } from '@/types'
 import { useEventsStore } from '@/stores/events'
 import StatusBadge from '@/components/StatusBadge.vue'
+import ActorTag from '@/components/ActorTag.vue'
 
 const events = useEventsStore()
 
@@ -92,6 +93,7 @@ function toggle(key: string): void {
               <th class="px-4 py-3">Données</th>
               <th class="px-4 py-3">Début</th>
               <th class="px-4 py-3">Durée</th>
+              <th class="px-4 py-3">Auteur</th>
               <th class="px-4 py-3">Snapshot</th>
             </tr>
           </thead>
@@ -107,10 +109,11 @@ function toggle(key: string): void {
                 <td class="px-4 py-3 text-zinc-400">{{ formatBytes(rec.bytes_processed) }}</td>
                 <td class="px-4 py-3 text-zinc-400">{{ formatDate(rec.start_time) }}</td>
                 <td class="px-4 py-3 text-zinc-400">{{ formatDuration(rec.start_time, rec.end_time) }}</td>
+                <td class="px-4 py-3"><ActorTag :actor="rec.triggered_by" /></td>
                 <td class="px-4 py-3 font-mono text-xs text-zinc-400">{{ shortID(rec.snapshot_id) }}</td>
               </tr>
               <tr v-if="expanded === `b${rec.id}` && rec.error_log" class="border-b border-zinc-800/50">
-                <td colspan="7" class="bg-zinc-950/60 px-6 py-3">
+                <td colspan="8" class="bg-zinc-950/60 px-6 py-3">
                   <pre class="max-h-48 overflow-auto whitespace-pre-wrap text-xs text-red-300">{{ rec.error_log }}</pre>
                 </td>
               </tr>
@@ -134,6 +137,7 @@ function toggle(key: string): void {
               <th class="px-4 py-3">Snapshot</th>
               <th class="px-4 py-3">Début</th>
               <th class="px-4 py-3">Durée</th>
+              <th class="px-4 py-3">Auteur</th>
             </tr>
           </thead>
           <tbody>
@@ -149,9 +153,10 @@ function toggle(key: string): void {
                 <td class="px-4 py-3 font-mono text-xs text-zinc-400">{{ shortID(rec.snapshot_id) }}</td>
                 <td class="px-4 py-3 text-zinc-400">{{ formatDate(rec.start_time) }}</td>
                 <td class="px-4 py-3 text-zinc-400">{{ formatDuration(rec.start_time, rec.end_time) }}</td>
+                <td class="px-4 py-3"><ActorTag :actor="rec.triggered_by" /></td>
               </tr>
               <tr v-if="expanded === `r${rec.id}` && rec.error_log" class="border-b border-zinc-800/50">
-                <td colspan="7" class="bg-zinc-950/60 px-6 py-3">
+                <td colspan="8" class="bg-zinc-950/60 px-6 py-3">
                   <pre class="max-h-48 overflow-auto whitespace-pre-wrap text-xs text-red-300">{{ rec.error_log }}</pre>
                 </td>
               </tr>

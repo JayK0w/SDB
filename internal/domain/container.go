@@ -1,6 +1,17 @@
 package domain
 
-import "time"
+import (
+	"regexp"
+	"time"
+)
+
+// volumeNamePattern : règle Docker pour un volume nommé. Le nom finit en
+// source de montage du worker : une valeur non contrainte y ferait passer
+// un chemin hôte arbitraire.
+var volumeNamePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$`)
+
+// ValidVolumeName : nom de volume Docker acceptable.
+func ValidVolumeName(name string) bool { return volumeNamePattern.MatchString(name) }
 
 type ContainerState string
 

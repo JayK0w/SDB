@@ -4,6 +4,7 @@ import { onMounted, ref, watch } from 'vue'
 import { api } from '@/lib/api'
 import { formatBytes } from '@/lib/format'
 import type { Container } from '@/types'
+import { useAuthStore } from '@/stores/auth'
 import { useEventsStore, type JobProgress } from '@/stores/events'
 import { useToastsStore } from '@/stores/toasts'
 import ProgressBar from '@/components/ProgressBar.vue'
@@ -11,6 +12,7 @@ import StatusBadge from '@/components/StatusBadge.vue'
 import BackupModal from '@/components/BackupModal.vue'
 import RestoreModal from '@/components/RestoreModal.vue'
 
+const auth = useAuthStore()
 const events = useEventsStore()
 const toasts = useToastsStore()
 
@@ -135,7 +137,16 @@ function stateDot(state: string): string {
                   >
                     Sauvegarder
                   </button>
-                  <button class="btn btn-ghost" @click="restoreTarget = ct">Restaurer</button>
+                  <!-- restauration = opération privilégiée (403 côté API
+                       pour le rôle user) : ne pas proposer un bouton qui
+                       échouerait -->
+                  <button
+                    v-if="auth.isAdmin"
+                    class="btn btn-ghost"
+                    @click="restoreTarget = ct"
+                  >
+                    Restaurer
+                  </button>
                 </div>
               </td>
             </tr>

@@ -65,6 +65,7 @@ type storageDTO struct {
 	Type           string    `json:"type"`
 	Endpoint       string    `json:"endpoint"`
 	CredentialKeys []string  `json:"credential_keys"`
+	AppendOnly     bool      `json:"append_only"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -78,7 +79,8 @@ func toStorageDTO(cfg domain.StorageConfig) storageDTO {
 	sort.Strings(keys)
 	return storageDTO{
 		ID: red.ID, Name: red.Name, Type: string(red.Type), Endpoint: red.Endpoint,
-		CredentialKeys: keys, CreatedAt: red.CreatedAt, UpdatedAt: red.UpdatedAt,
+		CredentialKeys: keys, AppendOnly: red.AppendOnly,
+		CreatedAt: red.CreatedAt, UpdatedAt: red.UpdatedAt,
 	}
 }
 
@@ -103,6 +105,8 @@ type backupRecordDTO struct {
 	Status         string     `json:"status"`
 	BytesProcessed int64      `json:"bytes_processed"`
 	SnapshotID     string     `json:"snapshot_id,omitempty"`
+	TriggeredBy    string     `json:"triggered_by,omitempty"`
+	TriggeredByID  int64      `json:"triggered_by_id,omitempty"`
 	StartTime      time.Time  `json:"start_time"`
 	EndTime        *time.Time `json:"end_time,omitempty"`
 	ErrorLog       string     `json:"error_log,omitempty"`
@@ -112,7 +116,9 @@ func toRecordDTO(rec domain.BackupRecord) backupRecordDTO {
 	return backupRecordDTO{
 		ID: rec.ID, ContainerID: rec.ContainerID, ContainerName: rec.ContainerName,
 		StorageID: rec.StorageID, Status: string(rec.Status), BytesProcessed: rec.BytesProcessed,
-		SnapshotID: rec.SnapshotID, StartTime: rec.StartTime, EndTime: rec.EndTime, ErrorLog: rec.ErrorLog,
+		SnapshotID: rec.SnapshotID,
+		TriggeredBy: rec.TriggeredBy.Name, TriggeredByID: rec.TriggeredBy.UserID,
+		StartTime: rec.StartTime, EndTime: rec.EndTime, ErrorLog: rec.ErrorLog,
 	}
 }
 
@@ -120,10 +126,14 @@ type restoreRecordDTO struct {
 	ID            int64      `json:"id"`
 	StorageID     int64      `json:"storage_id"`
 	SnapshotID    string     `json:"snapshot_id"`
+	SourceVolume  string     `json:"source_volume,omitempty"`
 	TargetVolume  string     `json:"target_volume"`
+	IsClone       bool       `json:"is_clone"`
 	ContainerID   string     `json:"container_id,omitempty"`
 	ContainerName string     `json:"container_name,omitempty"`
 	Status        string     `json:"status"`
+	TriggeredBy   string     `json:"triggered_by,omitempty"`
+	TriggeredByID int64      `json:"triggered_by_id,omitempty"`
 	StartTime     time.Time  `json:"start_time"`
 	EndTime       *time.Time `json:"end_time,omitempty"`
 	ErrorLog      string     `json:"error_log,omitempty"`
@@ -132,8 +142,11 @@ type restoreRecordDTO struct {
 func toRestoreDTO(rec domain.RestoreRecord) restoreRecordDTO {
 	return restoreRecordDTO{
 		ID: rec.ID, StorageID: rec.StorageID, SnapshotID: rec.SnapshotID,
-		TargetVolume: rec.TargetVolume, ContainerID: rec.ContainerID, ContainerName: rec.ContainerName,
-		Status: string(rec.Status), StartTime: rec.StartTime, EndTime: rec.EndTime, ErrorLog: rec.ErrorLog,
+		SourceVolume: rec.SourceVolume, TargetVolume: rec.TargetVolume, IsClone: rec.IsClone(),
+		ContainerID: rec.ContainerID, ContainerName: rec.ContainerName,
+		Status: string(rec.Status),
+		TriggeredBy: rec.TriggeredBy.Name, TriggeredByID: rec.TriggeredBy.UserID,
+		StartTime: rec.StartTime, EndTime: rec.EndTime, ErrorLog: rec.ErrorLog,
 	}
 }
 
@@ -226,6 +239,13 @@ type storageRequest struct {
 	Type        string            `json:"type" binding:"required"`
 	Endpoint    string            `json:"endpoint" binding:"required"`
 	Credentials map[string]string `json:"credentials"`
+	// AppendOnly : cliquet anti-destruction. Activable, jamais desactivable
+	// par l API (cf. StorageService.Update).
+	AppendOnly bool `json:"append_only"`
+	// ResticPassword : optionnel. Vide = SDB en genere un. Le fournir
+	// permet de le sequestrer hors de SDB, seule facon de survivre a la
+	// perte de sdb.db. Immuable apres creation.
+	ResticPassword string `json:"restic_password,omitempty"`
 }
 
 func (r storageRequest) toDomain(id int64) *domain.StorageConfig {
@@ -235,8 +255,36 @@ func (r storageRequest) toDomain(id int64) *domain.StorageConfig {
 		Type:        domain.StorageType(r.Type),
 		Endpoint:    r.Endpoint,
 		Credentials: r.Credentials,
-		// ResticPassword reste vide : genere a la creation, immuable en
-		// mise a jour (cf. StorageService)
+		AppendOnly:  r.AppendOnly,
+		// Vide a la creation = genere par StorageService.Create. En mise a
+		// jour, toute valeur differente de l existante est refusee : le mot
+		// de passe d un depot est immuable (cf. StorageService.Update).
+		ResticPassword: r.ResticPassword,
+	}
+}
+
+// storageCreatedDTO : reponse de CREATION uniquement. Porte le mot de passe
+// du depot en clair, une seule fois dans la vie de la configuration.
+//
+// C est deliberement le SEUL chemin de lecture : sans sequestre externe, la
+// perte de sdb.db rend le depot definitivement illisible, mais un endpoint
+// d export permanent donnerait a un admin compromis la totalite des depots.
+// Un unique affichage a la creation resout le premier probleme sans ouvrir
+// le second.
+type storageCreatedDTO struct {
+	storageDTO
+	ResticPassword string `json:"restic_password"`
+	Warning        string `json:"restic_password_warning"`
+}
+
+const escrowWarning = "Store this repository password in your secret manager NOW. " +
+	"It is shown once and never again. Without it, losing SDB's database makes this repository permanently unreadable."
+
+func toStorageCreatedDTO(cfg domain.StorageConfig) storageCreatedDTO {
+	return storageCreatedDTO{
+		storageDTO:     toStorageDTO(cfg),
+		ResticPassword: cfg.ResticPassword,
+		Warning:        escrowWarning,
 	}
 }
 
@@ -303,8 +351,11 @@ func (r backupRequest) toDomain() domain.BackupRequest {
 }
 
 type restoreRequest struct {
-	StorageID     int64  `json:"storage_id" binding:"required"`
-	SnapshotID    string `json:"snapshot_id" binding:"required"`
+	StorageID  int64  `json:"storage_id" binding:"required"`
+	SnapshotID string `json:"snapshot_id" binding:"required"`
+	// SourceVolume : volume tel qu archive. Vide = restauration en place.
+	// Different de TargetVolume = clonage vers un volume neuf.
+	SourceVolume  string `json:"source_volume"`
 	TargetVolume  string `json:"target_volume" binding:"required"`
 	StopContainer string `json:"stop_container"`
 }
@@ -313,6 +364,7 @@ func (r restoreRequest) toDomain() usecase.RestoreRequest {
 	return usecase.RestoreRequest{
 		StorageID:     r.StorageID,
 		SnapshotID:    r.SnapshotID,
+		SourceVolume:  r.SourceVolume,
 		TargetVolume:  r.TargetVolume,
 		StopContainer: r.StopContainer,
 	}

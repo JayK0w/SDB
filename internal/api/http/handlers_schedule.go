@@ -89,7 +89,7 @@ func (s *Server) handleRunSchedule(c *gin.Context) {
 		s.respondError(c, err)
 		return
 	}
-	rec, err := s.svc.Scheduler.RunNow(c.Request.Context(), id)
+	rec, err := s.svc.Scheduler.RunNow(c.Request.Context(), id, currentActor(c))
 	if err != nil {
 		s.respondError(c, err)
 		return

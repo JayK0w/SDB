@@ -10,6 +10,7 @@ import type {
   SchedulePayload,
   Snapshot,
   Storage,
+  StorageCreated,
   StoragePayload,
   User,
 } from '@/types'
@@ -93,7 +94,7 @@ export const api = {
 
   storage: {
     list: () => request<Storage[]>('GET', '/storage'),
-    create: (payload: StoragePayload) => request<Storage>('POST', '/storage', payload),
+    create: (payload: StoragePayload) => request<StorageCreated>('POST', '/storage', payload),
     update: (id: number, payload: StoragePayload) => request<Storage>('PUT', `/storage/${id}`, payload),
     remove: (id: number) => request<void>('DELETE', `/storage/${id}`),
     check: (id: number) => request<{ status: string }>('POST', `/storage/${id}/check`),
@@ -118,6 +119,15 @@ export const api = {
     cancel: (id: number) => request<void>('DELETE', `/restores/${id}`),
     history: (params: QueryParams = {}) =>
       request<RestoreRecord[]>('GET', `/restores/history${qs(params)}`),
+    cloneCompose: (containerId: string, sourceVolume: string, targetVolume: string) =>
+      request<{ compose: string }>(
+        'GET',
+        `/restores/clone-compose${qs({
+          container_id: containerId,
+          source_volume: sourceVolume,
+          target_volume: targetVolume,
+        })}`,
+      ),
   },
 
   schedules: {

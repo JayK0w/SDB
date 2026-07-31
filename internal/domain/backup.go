@@ -25,6 +25,26 @@ func (s BackupStatus) Terminal() bool {
 	return false
 }
 
+// Actor : qui a déclenché l'opération. Sauvegardes et restaurations sont
+// destructrices ou coûteuses : l'historique doit pouvoir répondre à « qui a
+// lancé ça ? » sans recouper les logs. UserID 0 = déclenchement interne
+// (planificateur), jamais un humain.
+type Actor struct {
+	UserID int64
+	Name   string
+}
+
+// SystemActor : déclencheur non humain, nommé d'après sa source.
+func SystemActor(source string) Actor { return Actor{UserID: 0, Name: "system:" + source} }
+
+// String : libellé stable pour les logs et l'historique.
+func (a Actor) String() string {
+	if a.Name == "" {
+		return "unknown"
+	}
+	return a.Name
+}
+
 // BackupRecord : une ligne de backups_history.
 type BackupRecord struct {
 	ID             int64
@@ -34,6 +54,7 @@ type BackupRecord struct {
 	Status         BackupStatus
 	BytesProcessed int64
 	SnapshotID     string
+	TriggeredBy    Actor
 	StartTime      time.Time
 	EndTime        *time.Time
 	ErrorLog       string
@@ -49,6 +70,9 @@ type BackupRequest struct {
 	PostHook      *Hook
 	Retention     *RetentionPolicy // forget --prune après succès
 	Tags          []string
+	// TriggeredBy : renseigné par la couche de livraison depuis le JWT, ou
+	// par le planificateur pour un run automatique.
+	TriggeredBy Actor
 }
 
 func (r *BackupRequest) Validate() error {

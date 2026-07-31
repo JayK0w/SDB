@@ -67,6 +67,37 @@ type Auth struct {
 
 type Maintenance struct {
 	CheckInterval time.Duration // 0 = vérifications d'intégrité désactivées
+	// ReadDataSubset : fraction des données réellement relues par
+	// `restic check` (ex. "5%"). Sans ce flag, check ne valide que la
+	// structure du dépôt : une corruption silencieuse d'un pack passe
+	// inaperçue jusqu'à la restauration, c'est-à-dire trop tard.
+	// Vide = structure seule (déconseillé en production).
+	ReadDataSubset string
+	// StrictPartial : une sortie restic 3 (fichiers sources illisibles)
+	// marque la sauvegarde en échec plutôt qu'en avertissement. Par défaut
+	// actif : une sauvegarde incomplète comptée comme réussie est le pire
+	// mode de défaillance possible pour de la donnée critique.
+	StrictPartial bool
+	// AlertWebhook : URL POSTée sur échec ou avertissement terminal. Vide =
+	// pas d'alerte sortante (les métriques Prometheus restent le seul
+	// canal). Peut contenir un jeton : jamais journalisée.
+	AlertWebhook string
+	// AlertTimeout : délai maximal d'un envoi d'alerte.
+	AlertTimeout time.Duration
+	// VerifyInterval : intervalle entre restaurations de vérification (le
+	// dernier snapshot de chaque dépôt est réellement extrait dans un
+	// volume jetable, avec contrôle des empreintes). C'est la seule preuve
+	// qu'une sauvegarde est restaurable. 0 = désactivé.
+	// Coûteux en lecture et en écriture disque : à cadencer plus large que
+	// les vérifications d'intégrité.
+	VerifyInterval time.Duration
+	// ScheduleCatchUp : rejouer au démarrage les planifications dont
+	// l'échéance est passée pendant l'arrêt. Désactivé par défaut : une
+	// sauvegarde peut ARRÊTER son conteneur, et rejouer en masse au
+	// redémarrage d'un hôte qui vient de tomber stopperait la production au
+	// pire moment. Les échéances manquées restent signalées (log +
+	// sdb_schedule_missed_runs_total) quel que soit ce réglage.
+	ScheduleCatchUp bool
 }
 
 type Log struct {
@@ -113,6 +144,27 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// strict par défaut : il faut une action explicite pour accepter des
+	// sauvegardes partielles comme réussies
+	strictPartial, err := getenvBool("SDB_BACKUP_STRICT_PARTIAL", true)
+	if err != nil {
+		return nil, err
+	}
+	alertTimeout, err := getenvDuration("SDB_ALERT_TIMEOUT", 10*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	// desactive par defaut : une restauration de verification ecrit
+	// reellement sur disque, l'exploitant doit l'activer en connaissance des
+	// I/O que ca represente
+	verifyInterval, err := getenvDuration("SDB_VERIFY_INTERVAL", 0)
+	if err != nil {
+		return nil, err
+	}
+	scheduleCatchUp, err := getenvBool("SDB_SCHEDULE_CATCHUP", false)
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := &Config{
 		DataDir: dataDir,
@@ -141,7 +193,13 @@ func Load() (*Config, error) {
 			MetricsToken:  metricsToken,
 		},
 		Maintenance: Maintenance{
-			CheckInterval: checkInterval,
+			CheckInterval:   checkInterval,
+			ReadDataSubset:  getenv("SDB_CHECK_READ_DATA_SUBSET", "5%"),
+			StrictPartial:   strictPartial,
+			AlertWebhook:    os.Getenv("SDB_ALERT_WEBHOOK"),
+			AlertTimeout:    alertTimeout,
+			VerifyInterval:  verifyInterval,
+			ScheduleCatchUp: scheduleCatchUp,
 		},
 		Log: Log{
 			Level:  getenv("SDB_LOG_LEVEL", "info"),
@@ -174,6 +232,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Maintenance.CheckInterval < 0 {
 		errs = append(errs, errors.New("SDB_CHECK_INTERVAL must be zero (disabled) or a positive duration"))
+	}
+	if c.Maintenance.VerifyInterval < 0 {
+		errs = append(errs, errors.New("SDB_VERIFY_INTERVAL must be zero (disabled) or a positive duration"))
 	}
 	// tcp:// vers le démon Docker = accès root distant : refusé sans mTLS complet
 	if strings.HasPrefix(c.Docker.Host, "tcp://") {

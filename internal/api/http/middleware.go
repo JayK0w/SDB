@@ -33,6 +33,72 @@ func (s *Server) requestLogger() gin.HandlerFunc {
 	}
 }
 
+// maxBodyBytes : plafond du corps des requêtes. Les payloads de SDB sont des
+// documents JSON de configuration, jamais des téléversements — sans plafond,
+// un client authentifié peut faire gonfler la mémoire du processus à volonté.
+const maxBodyBytes = 1 << 20 // 1 Mio
+
+// securityHeaders : l'UI est servie depuis le même binaire, la CSP peut donc
+// être stricte. `default-src 'self'` bloque toute ressource tierce ;
+// 'unsafe-inline' sur style-src reste nécessaire aux styles générés par Vue.
+// connect-src autorise le WebSocket de progression sur la même origine.
+func (s *Server) securityHeaders() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		h := c.Writer.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; "+
+				"script-src 'self'; "+
+				"style-src 'self' 'unsafe-inline'; "+
+				"img-src 'self' data:; "+
+				"font-src 'self' data:; "+
+				"connect-src 'self' ws: wss:; "+
+				"object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+		// HSTS seulement sous TLS : l'envoyer en clair sur un déploiement
+		// loopback verrouillerait le navigateur sur un https inexistant.
+		if c.Request.TLS != nil {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		c.Next()
+	}
+}
+
+// limitBody : borne le corps avant tout décodage JSON.
+func limitBody() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request.Body != nil {
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodyBytes)
+		}
+		c.Next()
+	}
+}
+
+// writeLimiter : plafond sur les opérations mutantes. Les runs sont déjà
+// protégés du parallélisme par ErrConflict, mais rien n'empêchait un compte
+// valide de marteler l'API et de saturer le daemon Docker.
+func (s *Server) writeLimiter() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		switch c.Request.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			c.Next()
+			return
+		}
+		key := c.ClientIP()
+		if claims := currentClaims(c); claims != nil {
+			key = strconv.FormatInt(claims.UserID(), 10)
+		}
+		if !s.writeLimit.allow(key) {
+			s.respondError(c, fmt.Errorf("%w: too many write requests, slow down", domain.ErrConflict))
+			return
+		}
+		c.Next()
+	}
+}
+
 func (s *Server) authRequired() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := bearerToken(c)
@@ -91,6 +157,17 @@ func currentClaims(c *gin.Context) *Claims {
 	}
 	claims, _ := v.(*Claims)
 	return claims
+}
+
+// currentActor : auteur de la requête, pour l'attribution des runs. Ne peut
+// être atteint que derrière authRequired ; l'acteur anonyme signalerait un
+// câblage de route fautif plutôt qu'un appel légitime.
+func currentActor(c *gin.Context) domain.Actor {
+	claims := currentClaims(c)
+	if claims == nil {
+		return domain.Actor{Name: "unknown"}
+	}
+	return domain.Actor{UserID: claims.UserID(), Name: claims.Username}
 }
 
 // respondError : sentinelles domaine → codes HTTP ; erreur inconnue = 500
