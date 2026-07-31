@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/errdefs"
 	"github.com/docker/docker/pkg/stdcopy"
 
 	"github.com/standalone-docker-backup/sdb/internal/domain"
@@ -81,6 +82,26 @@ func (r *Runtime) Get(ctx context.Context, id string) (*domain.Container, error)
 		c.Image = info.Config.Image
 	}
 	return c, nil
+}
+
+// RemoveVolume : suppression d'un volume jetable de vérification.
+//
+// Le refus hors préfixe est délibérément implémenté ICI, au plus près de
+// l'appel destructeur, et non seulement chez l'appelant : une régression
+// dans le usecase ne doit pas pouvoir se traduire par la destruction d'un
+// volume de production.
+func (r *Runtime) RemoveVolume(ctx context.Context, name string) error {
+	if !domain.IsScratchVolume(name) {
+		return fmt.Errorf("%w: refusing to remove volume %q, only %s* volumes are disposable",
+			domain.ErrForbidden, name, domain.VerifyVolumePrefix)
+	}
+	if err := r.cli.VolumeRemove(ctx, name, false); err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil // déjà parti : le nettoyage a atteint son but
+		}
+		return translate(err)
+	}
+	return nil
 }
 
 func (r *Runtime) Stop(ctx context.Context, id string, timeout time.Duration) error {

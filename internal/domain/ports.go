@@ -87,6 +87,20 @@ type ContainerRuntime interface {
 	// fin. Garanties : worker toujours supprimé (même sur annulation),
 	// aucune écriture sur stdout/stderr après le retour.
 	RunWorker(ctx context.Context, spec WorkerSpec, stdout, stderr io.Writer) (exitCode int, err error)
+	// RemoveVolume : supprime un volume Docker. Destructif : l'implémen-
+	// tation DOIT refuser tout nom hors du préfixe des volumes jetables de
+	// SDB (cf. VerifyVolumePrefix), pour qu'un défaut d'appel ne puisse pas
+	// détruire un volume de production.
+	RemoveVolume(ctx context.Context, name string) error
+}
+
+// VerifyVolumePrefix : préfixe réservé aux volumes jetables créés par les
+// restaurations de vérification. Seuls ceux-là sont supprimables par SDB.
+const VerifyVolumePrefix = "sdb-verify-"
+
+// IsScratchVolume : le volume est un jetable de vérification.
+func IsScratchVolume(name string) bool {
+	return len(name) > len(VerifyVolumePrefix) && name[:len(VerifyVolumePrefix)] == VerifyVolumePrefix
 }
 
 // --- Port moteur de snapshots (implémenté par internal/infra/restic) ---
@@ -96,8 +110,9 @@ type SnapshotEngine interface {
 	EnsureRepository(ctx context.Context, storage *StorageConfig) error
 	// Backup : snapshot des montages, événements poussés en continu.
 	Backup(ctx context.Context, storage *StorageConfig, backupID int64, mounts []Mount, tags []string, events chan<- ProgressEvent) (*BackupSummary, error)
-	// Restore : extrait un snapshot dans le volume cible (worker en écriture).
-	Restore(ctx context.Context, storage *StorageConfig, snapshotID, targetVolume string, events chan<- ProgressEvent) error
+	// Restore : extrait un snapshot dans le volume cible (worker en
+	// écriture), cf. RestoreSpec.
+	Restore(ctx context.Context, storage *StorageConfig, spec RestoreSpec, events chan<- ProgressEvent) error
 	Snapshots(ctx context.Context, storage *StorageConfig, tags []string) ([]Snapshot, error)
 	// Forget : applique la rétention (restic forget, --prune si demandé).
 	Forget(ctx context.Context, storage *StorageConfig, policy RetentionPolicy) error

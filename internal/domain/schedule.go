@@ -72,5 +72,6 @@ func (s *BackupSchedule) ToRequest() BackupRequest {
 		PostHook:      s.PostHook,
 		Retention:     s.Retention,
 		Tags:          append([]string{"scheduled:" + s.Name}, s.Tags...),
+		TriggeredBy:   SystemActor("schedule:" + s.Name),
 	}
 }

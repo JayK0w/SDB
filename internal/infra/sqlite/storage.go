@@ -24,7 +24,7 @@ func NewStorageRepo(db *sql.DB, cipher domain.Cipher) *StorageRepo {
 	return &StorageRepo{db: db, cipher: cipher}
 }
 
-const storageColumns = `id, name, type, endpoint, credentials_enc, restic_password_enc, created_at, updated_at`
+const storageColumns = `id, name, type, endpoint, credentials_enc, restic_password_enc, append_only, created_at, updated_at`
 
 func (r *StorageRepo) seal(cfg *domain.StorageConfig) (creds, password []byte, err error) {
 	rawCreds, err := json.Marshal(cfg.Credentials)
@@ -70,9 +70,9 @@ func (r *StorageRepo) Create(ctx context.Context, cfg *domain.StorageConfig) err
 		cfg.UpdatedAt = cfg.CreatedAt
 	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO storage_configs (name, type, endpoint, credentials_enc, restic_password_enc, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, fmtTime(cfg.CreatedAt), fmtTime(cfg.UpdatedAt))
+		`INSERT INTO storage_configs (name, type, endpoint, credentials_enc, restic_password_enc, append_only, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, cfg.AppendOnly, fmtTime(cfg.CreatedAt), fmtTime(cfg.UpdatedAt))
 	if isUniqueViolation(err) {
 		return fmt.Errorf("%w: storage %q", domain.ErrAlreadyExists, cfg.Name)
 	}
@@ -118,9 +118,9 @@ func (r *StorageRepo) Update(ctx context.Context, cfg *domain.StorageConfig) err
 	cfg.UpdatedAt = time.Now().UTC()
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE storage_configs
-		 SET name = ?, type = ?, endpoint = ?, credentials_enc = ?, restic_password_enc = ?, updated_at = ?
+		 SET name = ?, type = ?, endpoint = ?, credentials_enc = ?, restic_password_enc = ?, append_only = ?, updated_at = ?
 		 WHERE id = ?`,
-		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, fmtTime(cfg.UpdatedAt), cfg.ID)
+		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, cfg.AppendOnly, fmtTime(cfg.UpdatedAt), cfg.ID)
 	if isUniqueViolation(err) {
 		return fmt.Errorf("%w: storage %q", domain.ErrAlreadyExists, cfg.Name)
 	}
@@ -146,7 +146,7 @@ func (r *StorageRepo) scanStorage(row rowScanner) (*domain.StorageConfig, error)
 	var cfg domain.StorageConfig
 	var typ, createdAt, updatedAt string
 	var creds, password []byte
-	err := row.Scan(&cfg.ID, &cfg.Name, &typ, &cfg.Endpoint, &creds, &password, &createdAt, &updatedAt)
+	err := row.Scan(&cfg.ID, &cfg.Name, &typ, &cfg.Endpoint, &creds, &password, &cfg.AppendOnly, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}

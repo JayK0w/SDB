@@ -21,22 +21,83 @@ type SchedulerService struct {
 	backups   *BackupService
 	logger    *slog.Logger
 
+	// catchUp : rejouer UNE fois les planifications dont l'échéance est
+	// passée pendant un arrêt de SDB.
+	catchUp bool
+	// onMissed : notifié pour chaque planification en retard, même sans
+	// rattrapage. C'est le canal qui rend le trou visible.
+	onMissed func(sched domain.BackupSchedule, missed int)
+
 	mu      sync.Mutex
 	cron    *cron.Cron
 	entries map[int64]cron.EntryID
 }
 
-func NewSchedulerService(schedules domain.ScheduleRepository, backups *BackupService, logger *slog.Logger) *SchedulerService {
+// SchedulerOption : réglage optionnel, appliqué à la construction.
+type SchedulerOption func(*SchedulerService)
+
+// WithCatchUp : rejoue au démarrage les planifications dont l'échéance est
+// passée pendant l'arrêt.
+//
+// Désactivé par défaut, et c'est délibéré : une sauvegarde peut ARRÊTER son
+// conteneur. Rejouer automatiquement dix planifications au redémarrage d'un
+// hôte qui vient de tomber, c'est stopper dix services en production au pire
+// moment. Le trou reste signalé dans tous les cas ; seul le rattrapage
+// automatique est un choix.
+func WithCatchUp(enabled bool) SchedulerOption {
+	return func(s *SchedulerService) { s.catchUp = enabled }
+}
+
+// WithMissedRunHandler : branche l'observabilité (métrique, alerte) sur la
+// détection des échéances manquées.
+func WithMissedRunHandler(fn func(sched domain.BackupSchedule, missed int)) SchedulerOption {
+	return func(s *SchedulerService) { s.onMissed = fn }
+}
+
+func NewSchedulerService(schedules domain.ScheduleRepository, backups *BackupService, logger *slog.Logger, opts ...SchedulerOption) *SchedulerService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &SchedulerService{
+	s := &SchedulerService{
 		schedules: schedules,
 		backups:   backups,
 		logger:    logger,
 		cron:      cron.New(),
 		entries:   map[int64]cron.EntryID{},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// maxCountedMisses : plafond du comptage. Après un arrêt long, savoir qu'il
+// manque « au moins 50 » runs suffit ; itérer sur des années d'échéances ne
+// renseigne pas davantage et coûte du temps de démarrage.
+const maxCountedMisses = 50
+
+// missedRuns : nombre d'échéances tombées entre le dernier run et
+// maintenant. 0 si la planification est à jour ou n'a jamais tourné (il n'y
+// a alors pas de trou, juste une planification neuve).
+func missedRuns(spec string, lastRun *time.Time, now time.Time) (int, error) {
+	if lastRun == nil {
+		return 0, nil
+	}
+	schedule, err := cron.ParseStandard(spec)
+	if err != nil {
+		return 0, fmt.Errorf("%w: invalid cron expression %q: %v", domain.ErrInvalidInput, spec, err)
+	}
+	count := 0
+	// strictement AVANT maintenant : une échéance qui tombe pile à l'instant
+	// présent est sur le point d'être tirée par le cron vivant, la compter
+	// comme manquée produirait une fausse alerte.
+	for t := schedule.Next(*lastRun); t.Before(now); t = schedule.Next(t) {
+		count++
+		if count >= maxCountedMisses {
+			break
+		}
+	}
+	return count, nil
 }
 
 func ValidateCron(spec string) error {
@@ -89,7 +150,60 @@ func (s *SchedulerService) reload(ctx context.Context) error {
 		s.entries[sched.ID] = entryID
 	}
 	s.logger.Info("schedules loaded", "active", len(s.entries), "total", len(all))
+
+	// hors verrou : le rattrapage démarre des sauvegardes, qui reviennent
+	// vers le service
+	go s.reportMissed(all)
 	return nil
+}
+
+// reportMissed : signale les échéances tombées pendant un arrêt de SDB, et
+// rejoue au plus UNE fois par planification si le rattrapage est activé.
+//
+// Sans ça, une coupure de trois heures saute silencieusement les sauvegardes
+// concernées : l'exploitant continue de croire à sa couverture jusqu'au jour
+// où il en cherche une.
+func (s *SchedulerService) reportMissed(all []domain.BackupSchedule) {
+	now := time.Now()
+	for _, sched := range all {
+		if !sched.Enabled {
+			continue
+		}
+		missed, err := missedRuns(sched.Cron, sched.LastRunAt, now)
+		if err != nil || missed == 0 {
+			continue
+		}
+
+		s.logger.Warn("schedule missed its window while SDB was down",
+			"schedule", sched.Name, "container", sched.ContainerName,
+			"missed_runs", missed, "last_run", sched.LastRunAt.UTC().Format(time.RFC3339),
+			"catch_up", s.catchUp)
+		if s.onMissed != nil {
+			s.onMissed(sched, missed)
+		}
+
+		if !s.catchUp {
+			continue
+		}
+		// une seule reprise, quel que soit le nombre d'échéances ratées :
+		// dérouler l'arriéré n'apporte rien, les snapshots seraient
+		// identiques et se dédupliqueraient
+		req := sched.ToRequest()
+		req.TriggeredBy = domain.SystemActor("catchup:" + sched.Name)
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		rec, err := s.backups.Start(ctx, req)
+		cancel()
+		if err != nil {
+			s.logger.Error("catch-up run could not start", "schedule", sched.Name, "error", err)
+			continue
+		}
+		s.logger.Info("catch-up run started", "schedule", sched.Name, "backup_id", rec.ID)
+		touchCtx, touchCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := s.schedules.TouchLastRun(touchCtx, sched.ID, time.Now().UTC()); err != nil {
+			s.logger.Error("recording catch-up run", "schedule", sched.Name, "error", err)
+		}
+		touchCancel()
+	}
 }
 
 // fire : un conflit (run précédent encore en cours) est loggé et sauté —
@@ -111,12 +225,17 @@ func (s *SchedulerService) fire(sched domain.BackupSchedule) {
 }
 
 // RunNow : déclenchement manuel hors cadence.
-func (s *SchedulerService) RunNow(ctx context.Context, id int64) (*domain.BackupRecord, error) {
+// RunNow : déclenchement manuel d'une planification. L'acteur est l'humain
+// qui a cliqué, pas le planificateur — ToRequest() attribue au système, on
+// écrase donc l'attribution ici.
+func (s *SchedulerService) RunNow(ctx context.Context, id int64, actor domain.Actor) (*domain.BackupRecord, error) {
 	sched, err := s.schedules.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	rec, err := s.backups.Start(ctx, sched.ToRequest())
+	req := sched.ToRequest()
+	req.TriggeredBy = actor
+	rec, err := s.backups.Start(ctx, req)
 	if err != nil {
 		return nil, err
 	}

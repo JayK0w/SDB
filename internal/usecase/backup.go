@@ -27,9 +27,24 @@ type BackupService struct {
 	publisher  domain.EventPublisher
 	logger     *slog.Logger
 
+	// strictPartial : une sauvegarde partielle (restic exit 3, fichiers
+	// sources illisibles) est un échec, pas un avertissement. Compter une
+	// sauvegarde incomplète comme réussie fait croire à une couverture qui
+	// n'existe pas — le pire mode de défaillance pour de la donnée critique.
+	strictPartial bool
+
 	mu      sync.Mutex
 	running map[string]*job // clé = ID conteneur : un seul run à la fois
 	wg      sync.WaitGroup
+}
+
+// BackupOption : réglage optionnel du service, appliqué à la construction.
+type BackupOption func(*BackupService)
+
+// WithStrictPartial : bascule le traitement des sauvegardes partielles.
+// Actif par défaut ; le désactiver est un choix explicite de tolérance.
+func WithStrictPartial(strict bool) BackupOption {
+	return func(s *BackupService) { s.strictPartial = strict }
 }
 
 type job struct {
@@ -44,19 +59,25 @@ func NewBackupService(
 	history domain.BackupHistoryRepository,
 	publisher domain.EventPublisher,
 	logger *slog.Logger,
+	opts ...BackupOption,
 ) *BackupService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &BackupService{
-		containers: containers,
-		engine:     engine,
-		storages:   storages,
-		history:    history,
-		publisher:  publisher,
-		logger:     logger,
-		running:    map[string]*job{},
+	s := &BackupService{
+		containers:    containers,
+		engine:        engine,
+		storages:      storages,
+		history:       history,
+		publisher:     publisher,
+		logger:        logger,
+		strictPartial: true, // défaut sûr : partiel = échec
+		running:       map[string]*job{},
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Start : valide, enregistre un run pending, lance le pipeline en async.
@@ -83,6 +104,7 @@ func (s *BackupService) Start(ctx context.Context, req domain.BackupRequest) (*d
 		ContainerName: target.Name,
 		StorageID:     storage.ID,
 		Status:        domain.BackupPending,
+		TriggeredBy:   req.TriggeredBy,
 		StartTime:     time.Now().UTC(),
 	}
 
@@ -158,7 +180,8 @@ func (s *BackupService) GetRecord(ctx context.Context, id int64) (*domain.Backup
 func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, target *domain.Container,
 	storage *domain.StorageConfig, req domain.BackupRequest, mounts []domain.Mount) {
 
-	log := s.logger.With("backup_id", rec.ID, "container", target.Name, "storage", storage.Name)
+	log := s.logger.With("backup_id", rec.ID, "container", target.Name, "storage", storage.Name,
+		"actor", rec.TriggeredBy.String())
 	log.Info("backup started")
 	s.transition(ctx, rec, domain.BackupRunning, "backup started")
 
@@ -191,8 +214,14 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 	// 3. snapshot via le worker éphémère
 	summary, backupErr := s.snapshot(ctx, rec, storage, target, mounts, req.Tags)
 	if errors.Is(backupErr, domain.ErrPartial) {
-		warnings = append(warnings, backupErr.Error())
-		backupErr = nil
+		// En mode strict l'erreur est conservée : le run finit en `failed`
+		// et le snapshot incomplet n'est jamais présenté comme utilisable.
+		if s.strictPartial {
+			log.Warn("partial backup rejected (strict mode)", "detail", backupErr.Error())
+		} else {
+			warnings = append(warnings, backupErr.Error())
+			backupErr = nil
+		}
 	}
 	if summary != nil {
 		rec.SnapshotID = summary.SnapshotID
@@ -227,9 +256,16 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 		}
 	}
 
-	// 6. rétention après succès seulement ; son échec = warning, pas échec
+	// 6. rétention après succès seulement ; son échec = warning, pas échec.
+	// Un dépôt append-only ne subit jamais forget/prune : la politique est
+	// ignorée bruyamment plutôt que d'effacer des snapshots protégés.
 	if backupErr == nil && req.Retention != nil {
-		if err := s.engine.Forget(ctx, storage, *req.Retention); err != nil {
+		if err := storage.EnsureMutable("retention"); err != nil {
+			msg := "retention skipped: " + err.Error()
+			warnings = append(warnings, msg)
+			s.event(rec.ID, domain.EventLog, msg)
+			log.Warn("retention skipped on append-only storage", "storage", storage.Name)
+		} else if err := s.engine.Forget(ctx, storage, *req.Retention); err != nil {
 			msg := "retention failed: " + err.Error()
 			warnings = append(warnings, msg)
 			s.event(rec.ID, domain.EventError, msg)

@@ -36,8 +36,24 @@ type StorageConfig struct {
 	Endpoint       string            // chemin (local) ou URL (s3/sftp/rest/b2/azure/gs)
 	Credentials    map[string]string // secrets du backend (AWS_*, B2_*, clé SSH...)
 	ResticPassword string            // généré par SDB, protège le dépôt
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// AppendOnly : SDB refuse toute opération destructrice sur ce dépôt
+	// (forget, prune, suppression de la cible). SDB détient à la fois le
+	// socket Docker et le mot de passe du dépôt : sans ce garde-fou, une
+	// erreur de configuration de rétention — ou sa compromission — efface
+	// les sauvegardes en même temps que la production. Le verrou applicatif
+	// ne remplace PAS l'immuabilité côté serveur (rest-server --append-only,
+	// S3 Object Lock) : il la complète en supprimant SDB comme vecteur.
+	AppendOnly bool
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
+// EnsureMutable : garde-fou avant toute opération destructrice.
+func (s *StorageConfig) EnsureMutable(op string) error {
+	if s.AppendOnly {
+		return fmt.Errorf("%w: %s refused, storage %q is append-only", ErrForbidden, op, s.Name)
+	}
+	return nil
 }
 
 func (s *StorageConfig) Validate() error {

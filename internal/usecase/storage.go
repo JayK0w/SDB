@@ -26,6 +26,20 @@ func NewStorageService(storages domain.StorageRepository, engine domain.Snapshot
 
 // Create : mot de passe restic généré si absent, dépôt initialisé, et
 // rollback de la ligne si l'init échoue (pas de stockage inutilisable).
+// minResticPasswordLen : plancher pour un mot de passe fourni par
+// l'exploitant. Les mots générés font 43 caractères ; on n'accepte pas
+// qu'un choix manuel descende sous ce qui résiste à une attaque hors ligne
+// sur un dépôt volé.
+const minResticPasswordLen = 20
+
+// Create : initialise le dépôt. Si aucun mot de passe n'est fourni, un
+// aléatoire est généré.
+//
+// Fournir le sien permet de le SÉQUESTRER hors de SDB. C'est ce qui rend la
+// perte de sdb.db survivable : sans mot de passe conservé ailleurs, un dépôt
+// restic dont SDB détenait seul la clé est définitivement illisible. Après
+// création, la valeur n'est plus jamais restituée par l'API — un export
+// permanent donnerait à un admin compromis la totalité des dépôts.
 func (s *StorageService) Create(ctx context.Context, cfg *domain.StorageConfig) error {
 	cfg.ID = 0
 	if cfg.ResticPassword == "" {
@@ -34,6 +48,9 @@ func (s *StorageService) Create(ctx context.Context, cfg *domain.StorageConfig) 
 			return err
 		}
 		cfg.ResticPassword = pw
+	} else if len(cfg.ResticPassword) < minResticPasswordLen {
+		return fmt.Errorf("%w: a supplied repository password must be at least %d characters",
+			domain.ErrInvalidInput, minResticPasswordLen)
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -74,6 +91,14 @@ func (s *StorageService) Update(ctx context.Context, cfg *domain.StorageConfig) 
 	default:
 		return fmt.Errorf("%w: the repository password cannot be changed", domain.ErrInvalidInput)
 	}
+	// append_only est un cliquet : activable par l'API, jamais désactivable
+	// par elle. Sinon un compte admin compromis lèverait la protection puis
+	// purgerait le dépôt — exactement le scénario qu'elle doit empêcher.
+	// Le retour en arrière est une opération d'exploitation délibérée, hors
+	// de la surface d'attaque de l'application.
+	if existing.AppendOnly && !cfg.AppendOnly {
+		return fmt.Errorf("%w: append-only cannot be disabled through the API", domain.ErrForbidden)
+	}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -81,8 +106,17 @@ func (s *StorageService) Update(ctx context.Context, cfg *domain.StorageConfig) 
 }
 
 // Delete : le dépôt restic lui-même n'est pas effacé ; ErrConflict si
-// l'historique référence encore ce stockage.
+// l'historique référence encore ce stockage. Refusé sur un dépôt
+// append-only : perdre la configuration, c'est perdre le mot de passe du
+// dépôt, donc l'accès aux sauvegardes qu'il était censé protéger.
 func (s *StorageService) Delete(ctx context.Context, id int64) error {
+	cfg, err := s.storages.GetByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if err := cfg.EnsureMutable("delete"); err != nil {
+		return err
+	}
 	return s.storages.Delete(ctx, id)
 }
 

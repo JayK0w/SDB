@@ -48,6 +48,8 @@ export interface Storage {
   type: StorageType
   endpoint: string
   credential_keys: string[]
+  /** depot protege : SDB refuse forget/prune et sa suppression */
+  append_only: boolean
   created_at: string
   updated_at: string
 }
@@ -85,6 +87,9 @@ export interface BackupRecord {
   status: JobStatus
   bytes_processed: number
   snapshot_id?: string
+  /** auteur du run ; "system:schedule:<nom>" pour un run planifie */
+  triggered_by?: string
+  triggered_by_id?: number
   start_time: string
   end_time?: string
   error_log?: string
@@ -94,10 +99,17 @@ export interface RestoreRecord {
   id: number
   storage_id: number
   snapshot_id: string
+  /** volume tel qu'archivé ; absent = restauration en place */
+  source_volume?: string
   target_volume: string
+  /** true = restauré dans un volume neuf, l'original est intact */
+  is_clone: boolean
   container_id?: string
   container_name?: string
   status: JobStatus
+  /** auteur du run ; "system:schedule:<nom>" pour un run planifie */
+  triggered_by?: string
+  triggered_by_id?: number
   start_time: string
   end_time?: string
   error_log?: string
@@ -135,6 +147,8 @@ export interface BackupPayload {
 export interface RestorePayload {
   storage_id: number
   snapshot_id: string
+  /** volume tel qu'archivé ; omis = restauration en place */
+  source_volume?: string
   target_volume: string
   stop_container?: string
 }
@@ -158,6 +172,19 @@ export interface StoragePayload {
   type: StorageType
   endpoint: string
   credentials?: Record<string, string>
+  /** activable uniquement : l'API refuse de le repasser a false */
+  append_only?: boolean
+  /** optionnel : vide = SDB en genere un. Le fournir permet de le sequestrer. */
+  restic_password?: string
+}
+
+/**
+ * Reponse de CREATION d'un depot. Seule occasion ou le mot de passe du depot
+ * est restitue : il n'existe aucune route de lecture, par conception.
+ */
+export interface StorageCreated extends Storage {
+  restic_password: string
+  restic_password_warning: string
 }
 
 export interface ProgressEvent {

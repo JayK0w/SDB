@@ -19,7 +19,7 @@ var _ domain.RestoreHistoryRepository = (*RestoreRepo)(nil)
 
 func NewRestoreRepo(db *sql.DB) *RestoreRepo { return &RestoreRepo{db: db} }
 
-const restoreColumns = `id, storage_id, snapshot_id, target_volume, container_id, container_name, status, start_time, end_time, error_log`
+const restoreColumns = `id, storage_id, snapshot_id, source_volume, target_volume, container_id, container_name, status, triggered_by_id, triggered_by, start_time, end_time, error_log`
 
 func (r *RestoreRepo) Create(ctx context.Context, rec *domain.RestoreRecord) error {
 	if rec.StartTime.IsZero() {
@@ -29,10 +29,11 @@ func (r *RestoreRepo) Create(ctx context.Context, rec *domain.RestoreRecord) err
 		rec.Status = domain.BackupPending
 	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO restores_history (storage_id, snapshot_id, target_volume, container_id, container_name, status, start_time, end_time, error_log)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		rec.StorageID, rec.SnapshotID, rec.TargetVolume, rec.ContainerID, rec.ContainerName,
-		string(rec.Status), fmtTime(rec.StartTime), nullTime(rec.EndTime), rec.ErrorLog)
+		`INSERT INTO restores_history (storage_id, snapshot_id, source_volume, target_volume, container_id, container_name, status, triggered_by_id, triggered_by, start_time, end_time, error_log)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.StorageID, rec.SnapshotID, rec.SourceVolume, rec.TargetVolume, rec.ContainerID, rec.ContainerName,
+		string(rec.Status), rec.TriggeredBy.UserID, rec.TriggeredBy.Name,
+		fmtTime(rec.StartTime), nullTime(rec.EndTime), rec.ErrorLog)
 	if err != nil {
 		return fmt.Errorf("inserting restore record: %w", err)
 	}
@@ -126,8 +127,9 @@ func scanRestore(row rowScanner) (*domain.RestoreRecord, error) {
 	var rec domain.RestoreRecord
 	var status, startTime string
 	var endTime sql.NullString
-	err := row.Scan(&rec.ID, &rec.StorageID, &rec.SnapshotID, &rec.TargetVolume,
-		&rec.ContainerID, &rec.ContainerName, &status, &startTime, &endTime, &rec.ErrorLog)
+	err := row.Scan(&rec.ID, &rec.StorageID, &rec.SnapshotID, &rec.SourceVolume, &rec.TargetVolume,
+		&rec.ContainerID, &rec.ContainerName, &status,
+		&rec.TriggeredBy.UserID, &rec.TriggeredBy.Name, &startTime, &endTime, &rec.ErrorLog)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}

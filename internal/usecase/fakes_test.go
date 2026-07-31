@@ -23,6 +23,8 @@ type fakeRuntime struct {
 	starts    []string
 	execs     [][]string
 	execFn    func(cmd []string) (*domain.ExecResult, error)
+
+	removedVolumes []string
 }
 
 func (f *fakeRuntime) Ping(context.Context) error { return nil }
@@ -78,6 +80,24 @@ func (f *fakeRuntime) RunWorker(context.Context, domain.WorkerSpec, io.Writer, i
 	return 0, nil
 }
 
+func (f *fakeRuntime) RemoveVolume(_ context.Context, name string) error {
+	// meme garde-fou que l'implementation Docker : un test qui tenterait de
+	// supprimer un volume de production doit echouer ici aussi
+	if !domain.IsScratchVolume(name) {
+		return domain.ErrForbidden
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.removedVolumes = append(f.removedVolumes, name)
+	return nil
+}
+
+func (f *fakeRuntime) removed() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.removedVolumes...)
+}
+
 func (f *fakeRuntime) stopped() []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -106,8 +126,10 @@ type fakeEngine struct {
 	ensureCalls int
 	backupCalls int
 	checkCalls  int
-	forgets     []domain.RetentionPolicy
-	restores    []string
+	forgets      []domain.RetentionPolicy
+	restores     []string
+	snapshots    []domain.Snapshot
+	snapshotsErr error
 }
 
 func (f *fakeEngine) EnsureRepository(context.Context, *domain.StorageConfig) error {
@@ -131,9 +153,18 @@ func (f *fakeEngine) Backup(ctx context.Context, _ *domain.StorageConfig, _ int6
 	return f.summary, f.backupErr
 }
 
-func (f *fakeEngine) Restore(ctx context.Context, _ *domain.StorageConfig, snapshotID, targetVolume string, _ chan<- domain.ProgressEvent) error {
+func (f *fakeEngine) Restore(ctx context.Context, _ *domain.StorageConfig, spec domain.RestoreSpec, _ chan<- domain.ProgressEvent) error {
 	f.mu.Lock()
-	f.restores = append(f.restores, snapshotID+"->"+targetVolume)
+	// trace "snap->cible" en place, "snap:source->cible" en clonage : les
+	// tests doivent voir que la source a bien ete transmise au moteur
+	trace := spec.SnapshotID + "->" + spec.TargetVolume
+	if spec.SourceVolume != "" && spec.SourceVolume != spec.TargetVolume {
+		trace = spec.SnapshotID + ":" + spec.SourceVolume + "->" + spec.TargetVolume
+	}
+	if spec.Verify {
+		trace += "#verify"
+	}
+	f.restores = append(f.restores, trace)
 	fn := f.restoreFn
 	f.mu.Unlock()
 	if fn != nil {
@@ -145,7 +176,9 @@ func (f *fakeEngine) Restore(ctx context.Context, _ *domain.StorageConfig, snaps
 }
 
 func (f *fakeEngine) Snapshots(context.Context, *domain.StorageConfig, []string) ([]domain.Snapshot, error) {
-	return nil, nil
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]domain.Snapshot(nil), f.snapshots...), f.snapshotsErr
 }
 
 func (f *fakeEngine) Forget(_ context.Context, _ *domain.StorageConfig, p domain.RetentionPolicy) error {

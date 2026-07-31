@@ -17,7 +17,7 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
-func newBackupFixture(t *testing.T) (*BackupService, *fakeRuntime, *fakeEngine, *memHistory, *capturePublisher) {
+func newBackupFixture(t *testing.T, opts ...BackupOption) (*BackupService, *fakeRuntime, *fakeEngine, *memHistory, *capturePublisher) {
 	t.Helper()
 	runtime := &fakeRuntime{container: &domain.Container{
 		ID:    "c1",
@@ -36,7 +36,7 @@ func newBackupFixture(t *testing.T) (*BackupService, *fakeRuntime, *fakeEngine, 
 	engine := &fakeEngine{summary: &domain.BackupSummary{SnapshotID: "snap1", BytesProcessed: 12345}}
 	history := newMemHistory()
 	pub := &capturePublisher{}
-	svc := NewBackupService(runtime, engine, storages, history, pub, discardLogger())
+	svc := NewBackupService(runtime, engine, storages, history, pub, discardLogger(), opts...)
 	return svc, runtime, engine, history, pub
 }
 
@@ -170,7 +170,10 @@ func TestBackupPreHookContinueYieldsWarning(t *testing.T) {
 	}
 }
 
-func TestBackupPartialResultIsWarning(t *testing.T) {
+// Par défaut une sauvegarde partielle est un ECHEC : la compter comme
+// réussie ferait croire à une couverture inexistante, ce qui ne se découvre
+// qu'au moment de restaurer.
+func TestBackupPartialResultFailsInStrictMode(t *testing.T) {
 	svc, _, engine, history, _ := newBackupFixture(t)
 	engine.backupErr = fmt.Errorf("%w: some files unreadable", domain.ErrPartial)
 
@@ -179,11 +182,29 @@ func TestBackupPartialResultIsWarning(t *testing.T) {
 		t.Fatalf("Start() error: %v", err)
 	}
 	final := waitTerminal(t, history, rec.ID)
+	if final.Status != domain.BackupFailed {
+		t.Fatalf("Status = %s, want failed (strict mode is the default)", final.Status)
+	}
+	if final.ErrorLog == "" {
+		t.Fatal("a rejected partial backup must say why")
+	}
+}
+
+// Le mode tolérant reste accessible, mais il faut le demander explicitement.
+func TestBackupPartialResultIsWarningWhenNotStrict(t *testing.T) {
+	svc, _, engine, history, _ := newBackupFixture(t, WithStrictPartial(false))
+	engine.backupErr = fmt.Errorf("%w: some files unreadable", domain.ErrPartial)
+
+	rec, err := svc.Start(context.Background(), domain.BackupRequest{ContainerID: "c1", StorageID: 1})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	final := waitTerminal(t, history, rec.ID)
 	if final.Status != domain.BackupWarning {
-		t.Fatalf("Status = %s, want warning for a partial backup", final.Status)
+		t.Fatalf("Status = %s, want warning when strict mode is off", final.Status)
 	}
 	if final.SnapshotID != "snap1" {
-		t.Fatal("partial backups still produce a usable snapshot id")
+		t.Fatal("tolerated partial backups still produce a usable snapshot id")
 	}
 }
 

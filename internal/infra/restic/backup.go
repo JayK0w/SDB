@@ -66,20 +66,32 @@ func (e *Engine) Backup(ctx context.Context, storage *domain.StorageConfig, back
 	}
 }
 
-// Restore : volume cible monté en écriture au MÊME chemin qu'au backup,
-// restauration en place avec --include (un snapshot multi-volumes n'écrit
-// que dans le volume demandé).
+// Restore : le volume CIBLE est monté en écriture au chemin sous lequel le
+// volume SOURCE a été archivé, et --include ne retient que ce chemin (un
+// snapshot multi-volumes n'écrit que dans le volume demandé). Le chemin
+// vient donc de la source, jamais de la cible : c'est ce qui permet de
+// restaurer dans un volume au nom différent — sinon --include désignerait
+// un chemin absent du snapshot et rien ne serait restauré.
 func (e *Engine) Restore(ctx context.Context, storage *domain.StorageConfig,
-	snapshotID, targetVolume string, events chan<- domain.ProgressEvent) error {
+	spec domain.RestoreSpec, events chan<- domain.ProgressEvent) error {
 
-	if snapshotID == "" || targetVolume == "" {
+	if spec.SnapshotID == "" || spec.TargetVolume == "" {
 		return fmt.Errorf("%w: snapshot id and target volume are required", domain.ErrInvalidInput)
 	}
-	m := domain.Mount{Type: domain.MountVolume, Name: targetVolume}
-	m.Destination = dataMountRoot + "/" + mountName(m)
-	m.ReadOnly = false
+	archived := dataMountRoot + "/" + mountName(domain.Mount{Type: domain.MountVolume, Name: spec.Source()})
+	m := domain.Mount{
+		Type:        domain.MountVolume,
+		Name:        spec.TargetVolume,
+		Destination: archived,
+		ReadOnly:    false,
+	}
 
-	cmd := []string{"restore", snapshotID, "--json", "--target", "/", "--include", m.Destination}
+	cmd := []string{"restore", spec.SnapshotID, "--json", "--target", "/", "--include", archived}
+	if spec.Verify {
+		// restic relit les fichiers écrits et compare aux empreintes du
+		// snapshot : une sortie 0 prouve alors la restaurabilité.
+		cmd = append(cmd, "--verify")
+	}
 
 	stdout := &streamio.LineWriter{Emit: func(line string) {
 		send(ctx, events, decodeRestoreLine(line))

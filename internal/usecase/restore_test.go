@@ -102,6 +102,83 @@ func TestRestoreFailureStillRestartsContainer(t *testing.T) {
 	}
 }
 
+// Le clonage doit transmettre le volume SOURCE au moteur : sans lui,
+// --include designerait un chemin absent du snapshot et rien ne serait
+// restaure (le bug que la fonctionnalite corrige).
+func TestRestoreCloneIntoNewVolumePassesSourceToEngine(t *testing.T) {
+	svc, runtime, engine, history, _ := newRestoreFixture(t)
+
+	rec, err := svc.Start(context.Background(), RestoreRequest{
+		StorageID: 1, SnapshotID: "snap1",
+		SourceVolume: "pgdata", TargetVolume: "pgdata_clone",
+	})
+	if err != nil {
+		t.Fatalf("Start() error: %v", err)
+	}
+	final := waitRestoreTerminal(t, history, rec.ID)
+	if final.Status != domain.BackupSuccess {
+		t.Fatalf("Status = %s (%s), want success", final.Status, final.ErrorLog)
+	}
+	if !final.IsClone() {
+		t.Fatalf("record should be flagged as a clone: %+v", final)
+	}
+	if len(engine.restores) != 1 || engine.restores[0] != "snap1:pgdata->pgdata_clone" {
+		t.Fatalf("engine restores = %v, want the source volume forwarded", engine.restores)
+	}
+	// le conteneur source ne touche pas au volume cible : le laisser tourner
+	// est tout l'interet du clonage
+	if len(runtime.stopped()) != 0 || len(runtime.started()) != 0 {
+		t.Fatalf("clone must not stop/start the source container: %v/%v",
+			runtime.stopped(), runtime.started())
+	}
+}
+
+// Un clone vise un volume different : il ne doit pas entrer en conflit avec
+// une restauration en cours sur le volume d'origine.
+func TestRestoreCloneDoesNotConflictWithInPlaceRestore(t *testing.T) {
+	svc, _, engine, history, _ := newRestoreFixture(t)
+	release := make(chan struct{})
+	engine.restoreFn = func(ctx context.Context) error {
+		<-release
+		return nil
+	}
+
+	inPlace, err := svc.Start(context.Background(), RestoreRequest{
+		StorageID: 1, SnapshotID: "s", TargetVolume: "pgdata",
+	})
+	if err != nil {
+		t.Fatalf("in-place Start() error: %v", err)
+	}
+	clone, err := svc.Start(context.Background(), RestoreRequest{
+		StorageID: 1, SnapshotID: "s", SourceVolume: "pgdata", TargetVolume: "pgdata_clone",
+	})
+	if err != nil {
+		t.Fatalf("clone Start() error: %v, want no conflict on a distinct volume", err)
+	}
+	close(release)
+	waitRestoreTerminal(t, history, inPlace.ID)
+	waitRestoreTerminal(t, history, clone.ID)
+}
+
+func TestRestoreRejectsInvalidVolumeName(t *testing.T) {
+	svc, _, _, _, _ := newRestoreFixture(t)
+
+	for _, name := range []string{"../../etc", "/host/path", "bad name", ""} {
+		_, err := svc.Start(context.Background(), RestoreRequest{
+			StorageID: 1, SnapshotID: "s", TargetVolume: name,
+		})
+		if !errors.Is(err, domain.ErrInvalidInput) {
+			t.Fatalf("target volume %q: err = %v, want ErrInvalidInput", name, err)
+		}
+	}
+	_, err := svc.Start(context.Background(), RestoreRequest{
+		StorageID: 1, SnapshotID: "s", SourceVolume: "../escape", TargetVolume: "ok_clone",
+	})
+	if !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("source volume escape: err = %v, want ErrInvalidInput", err)
+	}
+}
+
 func TestRestoreConflictOnSameVolume(t *testing.T) {
 	svc, _, engine, history, _ := newRestoreFixture(t)
 	release := make(chan struct{})

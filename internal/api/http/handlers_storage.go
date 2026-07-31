@@ -49,7 +49,9 @@ func (s *Server) handleCreateStorage(c *gin.Context) {
 		s.respondError(c, err)
 		return
 	}
-	c.JSON(http.StatusCreated, toStorageDTO(*cfg))
+	// unique restitution du mot de passe : l administrateur doit pouvoir le
+	// sequestrer hors de SDB
+	c.JSON(http.StatusCreated, toStorageCreatedDTO(*cfg))
 }
 
 func (s *Server) handleUpdateStorage(c *gin.Context) {

@@ -19,7 +19,7 @@ var _ domain.BackupHistoryRepository = (*HistoryRepo)(nil)
 
 func NewHistoryRepo(db *sql.DB) *HistoryRepo { return &HistoryRepo{db: db} }
 
-const historyColumns = `id, container_id, container_name, storage_id, status, bytes_processed, snapshot_id, start_time, end_time, error_log`
+const historyColumns = `id, container_id, container_name, storage_id, status, bytes_processed, snapshot_id, triggered_by_id, triggered_by, start_time, end_time, error_log`
 
 func (r *HistoryRepo) Create(ctx context.Context, rec *domain.BackupRecord) error {
 	if rec.StartTime.IsZero() {
@@ -29,10 +29,11 @@ func (r *HistoryRepo) Create(ctx context.Context, rec *domain.BackupRecord) erro
 		rec.Status = domain.BackupPending
 	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO backups_history (container_id, container_name, storage_id, status, bytes_processed, snapshot_id, start_time, end_time, error_log)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO backups_history (container_id, container_name, storage_id, status, bytes_processed, snapshot_id, triggered_by_id, triggered_by, start_time, end_time, error_log)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.ContainerID, rec.ContainerName, rec.StorageID, string(rec.Status),
-		rec.BytesProcessed, rec.SnapshotID, fmtTime(rec.StartTime), nullTime(rec.EndTime), rec.ErrorLog)
+		rec.BytesProcessed, rec.SnapshotID, rec.TriggeredBy.UserID, rec.TriggeredBy.Name,
+		fmtTime(rec.StartTime), nullTime(rec.EndTime), rec.ErrorLog)
 	if err != nil {
 		return fmt.Errorf("inserting backup record: %w", err)
 	}
@@ -128,7 +129,8 @@ func scanRecord(row rowScanner) (*domain.BackupRecord, error) {
 	var status, startTime string
 	var endTime sql.NullString
 	err := row.Scan(&rec.ID, &rec.ContainerID, &rec.ContainerName, &rec.StorageID, &status,
-		&rec.BytesProcessed, &rec.SnapshotID, &startTime, &endTime, &rec.ErrorLog)
+		&rec.BytesProcessed, &rec.SnapshotID, &rec.TriggeredBy.UserID, &rec.TriggeredBy.Name,
+		&startTime, &endTime, &rec.ErrorLog)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}

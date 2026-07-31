@@ -16,12 +16,29 @@ import (
 type Engine struct {
 	runtime domain.ContainerRuntime
 	image   string
+	// readDataSubset : fraction relue par Check (ex. "5%"). Vide = contrôle
+	// de structure seul.
+	readDataSubset string
 }
 
 var _ domain.SnapshotEngine = (*Engine)(nil)
 
-func New(runtime domain.ContainerRuntime, workerImage string) *Engine {
-	return &Engine{runtime: runtime, image: workerImage}
+// Option : réglage optionnel du moteur, appliqué à la construction.
+type Option func(*Engine)
+
+// WithReadDataSubset : fait relire une fraction des données par `restic
+// check` (`--read-data-subset`). Sans lui, check ne valide que la structure
+// et laisse passer une corruption de pack.
+func WithReadDataSubset(subset string) Option {
+	return func(e *Engine) { e.readDataSubset = subset }
+}
+
+func New(runtime domain.ContainerRuntime, workerImage string, opts ...Option) *Engine {
+	e := &Engine{runtime: runtime, image: workerImage}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // run : une commande restic dans un worker neuf. Erreur = problème infra ;
@@ -137,8 +154,12 @@ func (e *Engine) Forget(ctx context.Context, storage *domain.StorageConfig, poli
 }
 
 func (e *Engine) Check(ctx context.Context, storage *domain.StorageConfig) error {
+	cmd := []string{"check"}
+	if e.readDataSubset != "" {
+		cmd = append(cmd, "--read-data-subset="+e.readDataSubset)
+	}
 	stderr := streamio.NewBounded(32 << 10)
-	exit, err := e.run(ctx, storage, []string{"check"}, nil, nil, io.Discard, stderr)
+	exit, err := e.run(ctx, storage, cmd, nil, nil, io.Discard, stderr)
 	if err != nil {
 		return err
 	}

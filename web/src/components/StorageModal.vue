@@ -85,6 +85,11 @@ const TYPES: TypeInfo[] = [
 const name = ref('')
 const type = ref<StorageType>('local')
 const endpoint = ref('')
+const appendOnly = ref(false)
+// mot de passe restitue une seule fois par l'API : tant qu'il est affiche,
+// la modale reste ouverte, sinon il est perdu pour toujours
+const createdPassword = ref('')
+const createdName = ref('')
 const credentials = ref<{ key: string; value: string }[]>([])
 const submitting = ref(false)
 const error = ref('')
@@ -107,6 +112,15 @@ function removeCredential(index: number): void {
   credentials.value.splice(index, 1)
 }
 
+async function copyPassword(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(createdPassword.value)
+    toasts.success('Mot de passe copié')
+  } catch {
+    error.value = 'Copie impossible : sélectionne le texte et copie-le manuellement.'
+  }
+}
+
 async function submit(): Promise<void> {
   error.value = ''
   submitting.value = true
@@ -120,10 +134,13 @@ async function submit(): Promise<void> {
       type: type.value,
       endpoint: endpoint.value,
       credentials: creds,
+      append_only: appendOnly.value,
     })
     toasts.success(`Stockage « ${created.name} » créé, dépôt restic initialisé`)
     emit('created')
-    emit('close')
+    // on n'emet PAS close : le mot de passe doit etre sequestre avant
+    createdName.value = created.name
+    createdPassword.value = created.restic_password
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -134,7 +151,36 @@ async function submit(): Promise<void> {
 
 <template>
   <Modal title="Nouveau stockage" @close="emit('close')">
-    <form class="space-y-4" @submit.prevent="submit">
+    <!-- Unique restitution du mot de passe du depot. Sans sequestre externe,
+         la perte de la base de SDB rend ce depot definitivement illisible. -->
+    <div v-if="createdPassword" class="space-y-4">
+      <p class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+        <strong>Note ce mot de passe maintenant.</strong>
+        Il n'est affiché qu'une seule fois — aucune route de l'API ne permet de le relire.
+        Sans lui, la perte de la base de SDB rend le dépôt
+        <span class="font-mono">{{ createdName }}</span> définitivement illisible.
+      </p>
+
+      <div>
+        <label class="label">Mot de passe du dépôt restic</label>
+        <pre class="overflow-x-auto rounded-lg border border-zinc-700 bg-zinc-900 p-3 font-mono text-sm text-zinc-200">{{ createdPassword }}</pre>
+        <p class="mt-1 text-xs text-zinc-500">
+          Range-le dans ton gestionnaire de secrets. Il permet d'ouvrir le dépôt avec
+          <span class="font-mono">restic</span> directement, sans SDB.
+        </p>
+      </div>
+
+      <p v-if="error" class="text-sm text-red-400">{{ error }}</p>
+
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" class="btn btn-ghost" @click="copyPassword">Copier</button>
+        <button type="button" class="btn btn-primary" @click="emit('close')">
+          C'est séquestré, fermer
+        </button>
+      </div>
+    </div>
+
+    <form v-else class="space-y-4" @submit.prevent="submit">
       <div>
         <label class="label" for="storage-name">Nom</label>
         <input id="storage-name" v-model="name" class="input" placeholder="NAS hors-site" required />
@@ -185,6 +231,18 @@ async function submit(): Promise<void> {
           <button type="button" class="btn btn-ghost px-2" aria-label="Retirer" @click="removeCredential(i)">✕</button>
         </div>
       </div>
+
+      <label class="flex items-start gap-3 rounded-lg border border-zinc-800 px-3 py-2 text-sm text-zinc-300">
+        <input v-model="appendOnly" type="checkbox" class="mt-0.5 accent-indigo-500" />
+        <span>
+          Dépôt append-only
+          <span class="block text-xs text-zinc-500">
+            SDB refusera d'y appliquer une rétention (<code>forget</code>/<code>prune</code>) et de
+            supprimer cette cible. Irréversible depuis l'interface : la protection ne peut plus être
+            levée par l'API une fois activée.
+          </span>
+        </span>
+      </label>
 
       <p class="text-xs text-zinc-500">
         Le mot de passe du dépôt restic est généré automatiquement et stocké chiffré (AES-256-GCM).
