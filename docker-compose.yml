@@ -39,6 +39,17 @@ services:
       SDB_LOG_FORMAT: json
       # vérifications d'intégrité hebdomadaires ; 0 pour désactiver
       SDB_CHECK_INTERVAL: 168h
+      # restauration de VÉRIFICATION : le dernier snapshot de chaque dépôt est
+      # réellement extrait dans un volume jetable (sdb-verify-*) avec contrôle
+      # des empreintes, puis le volume est détruit. Seule preuve qu'une
+      # sauvegarde est restaurable — le reste prouve qu'elle existe.
+      # Coûteux en I/O : décaler si la fenêtre chevauche la production.
+      SDB_VERIFY_INTERVAL: ${SDB_VERIFY_INTERVAL:-168h}
+      # alerte sortante sur run terminé en échec ou avertissement. Vide =
+      # aucune alerte, les échecs ne sont visibles que dans /metrics et les
+      # logs. Peut contenir un jeton : la renseigner dans le .env, jamais ici.
+      SDB_ALERT_WEBHOOK: ${SDB_ALERT_WEBHOOK:-}
+      SDB_ALERT_TIMEOUT: ${SDB_ALERT_TIMEOUT:-10s}
       # /metrics Prometheus (désactivé si vide) ; exporter la variable ou
       # la mettre dans un fichier .env à côté de ce compose
       SDB_METRICS_TOKEN: ${SDB_METRICS_TOKEN:-}
