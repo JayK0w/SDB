@@ -69,6 +69,57 @@ func TestVerifyRestoresLatestSnapshotIntoScratchVolumeWithVerify(t *testing.T) {
 	}
 }
 
+// Un RTO annoncé sans mesure est une promesse. La vérification restaure pour
+// de vrai : sa durée est la seule base honnête du chiffre publié, et elle doit
+// remonter même quand la restauration échoue — un échec lent et un échec
+// immédiat ne se diagnostiquent pas pareil.
+func TestVerificationReportsMeasuredDuration(t *testing.T) {
+	runtime := &fakeRuntime{}
+	storages := newMemStorages()
+	if err := storages.Create(context.Background(), &domain.StorageConfig{
+		Name: "local", Type: domain.StorageLocal, Endpoint: "/backups", ResticPassword: "pw",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	engine := &fakeEngine{
+		snapshots: []domain.Snapshot{
+			{ID: "new", ShortID: "new", Time: time.Now().Add(-time.Hour), Paths: []string{"/sdb/data/pgdata"}},
+		},
+		// restauration volontairement non instantanée : une durée toujours
+		// nulle passerait le test sans rien mesurer
+		restoreFn: func(context.Context) error { time.Sleep(20 * time.Millisecond); return nil },
+	}
+	var got []VerificationResult
+	svc := NewVerificationService(runtime, engine, storages, newMemRestores(), &capturePublisher{}, discardLogger(),
+		WithVerificationObserver(func(res VerificationResult) { got = append(got, res) }))
+
+	if _, err := svc.VerifyStorage(context.Background(), 1); err != nil {
+		t.Fatalf("VerifyStorage() error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("%d observations, want 1", len(got))
+	}
+	if !got[0].Succeeded || got[0].StorageName != "local" || got[0].SnapshotID != "new" {
+		t.Fatalf("observation = %+v", got[0])
+	}
+	if got[0].Duration <= 0 {
+		t.Fatalf("Duration = %s: an unmeasured duration cannot back an RTO", got[0].Duration)
+	}
+
+	// échec : la durée doit remonter quand même
+	got = nil
+	engine.restoreErr = errors.New("pack missing")
+	if _, err := svc.VerifyStorage(context.Background(), 1); err == nil {
+		t.Fatal("VerifyStorage() must surface the failure")
+	}
+	if len(got) != 1 || got[0].Succeeded {
+		t.Fatalf("failed verification must still be observed: %+v", got)
+	}
+	if got[0].Duration <= 0 {
+		t.Fatalf("Duration = %s on failure, want the measured time", got[0].Duration)
+	}
+}
+
 // Un échec doit être enregistré ET remonter : c'est tout l'intérêt, sinon
 // on découvre le problème le jour de la vraie restauration.
 func TestVerifyFailureIsRecordedAndReturned(t *testing.T) {

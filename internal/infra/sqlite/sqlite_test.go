@@ -208,6 +208,114 @@ func TestStorageRepoRejectsCopyOfMissingStorage(t *testing.T) {
 	}
 }
 
+// cipherWith : Cipher sur une clé maître donnée, pour les tests de rotation.
+func cipherWith(t *testing.T, key string) domain.Cipher {
+	t.Helper()
+	c, err := crypto.NewAESGCM(key)
+	if err != nil {
+		t.Fatalf("NewAESGCM() error: %v", err)
+	}
+	return c
+}
+
+// Une clé maître qu'on ne sait pas changer transforme un soupçon de fuite en
+// impasse : la seule issue serait de recréer tous les dépôts, donc de perdre
+// l'historique.
+func TestRotateMasterKeyReEncryptsEverySecret(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	oldKey := "old-master-key-0123456789abcdef01"
+	newKey := "new-master-key-fedcba9876543210ff"
+
+	before := sqlite.NewStorageRepo(db, cipherWith(t, oldKey))
+	for _, name := range []string{"primary", "offsite"} {
+		if err := before.Create(ctx, &domain.StorageConfig{
+			Name: name, Type: domain.StorageS3, Endpoint: "s3.example.com/" + name,
+			ResticPassword: "repo-password-" + name,
+			Credentials:    map[string]string{"AWS_SECRET_ACCESS_KEY": "secret-" + name},
+		}); err != nil {
+			t.Fatalf("Create(%s) error: %v", name, err)
+		}
+	}
+
+	n, err := sqlite.RotateMasterKey(ctx, db, cipherWith(t, oldKey), cipherWith(t, newKey))
+	if err != nil {
+		t.Fatalf("RotateMasterKey() error: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("rotated %d storages, want 2", n)
+	}
+
+	after := sqlite.NewStorageRepo(db, cipherWith(t, newKey))
+	cfg, err := after.GetByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("GetByID() with the new key: %v", err)
+	}
+	if cfg.ResticPassword != "repo-password-primary" || cfg.Credentials["AWS_SECRET_ACCESS_KEY"] != "secret-primary" {
+		t.Fatalf("secrets did not survive the rotation: %+v", cfg)
+	}
+
+	// et surtout : l'ancienne clé ne doit plus rien ouvrir, sinon la rotation
+	// n'a pas retiré l'accès qu'elle était censée révoquer
+	if _, err := before.GetByID(ctx, 1); err == nil {
+		t.Fatal("the OLD master key still decrypts the storage config: nothing was actually rotated")
+	}
+}
+
+// Une rotation à moitié faite laisserait une base dont une partie des secrets
+// est illisible — pire que pas de rotation du tout.
+func TestRotateMasterKeyLeavesDatabaseIntactOnWrongCurrentKey(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	realKey := "real-master-key-0123456789abcdef0"
+	wrongKey := "wrong-master-key-0123456789abcdef"
+	newKey := "new-master-key-fedcba9876543210ff"
+
+	repo := sqlite.NewStorageRepo(db, cipherWith(t, realKey))
+	if err := repo.Create(ctx, &domain.StorageConfig{
+		Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary", ResticPassword: "pw",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := sqlite.RotateMasterKey(ctx, db, cipherWith(t, wrongKey), cipherWith(t, newKey)); err == nil {
+		t.Fatal("rotating with the wrong current key must fail")
+	}
+	cfg, err := repo.GetByID(ctx, 1)
+	if err != nil || cfg.ResticPassword != "pw" {
+		t.Fatalf("failed rotation must leave the database untouched: %+v, %v", cfg, err)
+	}
+}
+
+// Le filet de sécurité doit être une base OUVRABLE, pas un fichier tronqué :
+// en mode WAL, une simple copie du fichier ne l'est pas forcément.
+func TestSnapshotProducesAReadableDatabase(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	key := "snapshot-master-key-0123456789abc"
+	repo := sqlite.NewStorageRepo(db, cipherWith(t, key))
+	if err := repo.Create(ctx, &domain.StorageConfig{
+		Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary", ResticPassword: "pw-escrowed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "snapshot.db")
+	if err := sqlite.Snapshot(ctx, db, path); err != nil {
+		t.Fatalf("Snapshot() error: %v", err)
+	}
+	copyDB, err := sqlite.Open(path)
+	if err != nil {
+		t.Fatalf("Open(snapshot) error: %v", err)
+	}
+	defer copyDB.Close()
+
+	cfg, err := sqlite.NewStorageRepo(copyDB, cipherWith(t, key)).GetByID(ctx, 1)
+	if err != nil || cfg.ResticPassword != "pw-escrowed" {
+		t.Fatalf("snapshot is not a usable database: %+v, %v", cfg, err)
+	}
+}
+
 func TestHistoryRepoListAndFailInterrupted(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

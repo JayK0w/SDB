@@ -78,6 +78,7 @@ one move. The following controls exist to break that:
 | **Verification restores** — the latest snapshot of every repository is *actually extracted* into a disposable `sdb-verify-*` volume with `restic restore --verify`, then the volume is destroyed. | off | `SDB_VERIFY_INTERVAL` |
 | **Missed-window detection** — schedules whose slot elapsed while SDB was down are logged and counted in `sdb_schedule_missed_runs_total`. Catch-up replays at most one run per schedule. | detection on, catch-up off | `SDB_SCHEDULE_CATCHUP` |
 | **Secondary copies (3-2-1)** — a storage declared as the copy of another receives every snapshot through `restic copy`, right after each successful backup and again on a reconciliation pass. Replication lag is *measured in both repositories*, never remembered. | off until a copy exists, reconciliation every 6h | `SDB_REPLICATION_INTERVAL` |
+| **Master key rotation** — `sdb rotate-master-key` re-encrypts every stored secret offline: consistent pre-rotation snapshot, single transaction, each value read back with the new key before commit. Deliberately not an API route. | on demand | `SDB_NEW_MASTER_KEY` |
 
 **The append-only flag is an application-level ratchet, not immutability.**
 It removes SDB as a deletion vector; it cannot stop someone who reaches the
@@ -150,6 +151,30 @@ discovered at 3am:
 `GET /replication` measures the gap on demand (two `restic snapshots` per
 pair); `POST /storage/:id/replicate` forces a full pass.
 
+### Runbook, RPO and RTO
+
+Operating procedures live in **[docs/RUNBOOK.md](docs/RUNBOOK.md)** (French):
+what to do when a verification fails, when a repository is corrupted, when the
+secondary copy falls behind, how to restore without SDB at all, and how to
+rotate the keys.
+
+The two numbers an auditor asks for are **measured, not declared**:
+
+- **RPO** — `sdb_last_backup_success_timestamp_seconds` gives the real age of
+  the last *successful* backup per container. The announced RPO is the
+  schedule interval plus the detection delay, and the detection delay is only
+  short if `SDB_ALERT_WEBHOOK` is set.
+- **RTO** — the verification restore is a real restore, so it is timed:
+  `sdb_verification_restore_duration_seconds` is the measured basis for any
+  announced recovery time. Without `SDB_VERIFY_INTERVAL` there is no
+  measurement, and an RTO without a measurement is a promise.
+
+Ready-to-load Prometheus rules are in
+[deploy/prometheus/sdb-alerts.yml](deploy/prometheus/sdb-alerts.yml). They
+cover the four ways to lose coverage without ever seeing a red run: nothing
+backs up any more, a scheduled window was missed, the second copy fell behind,
+and nothing proves restorability any more.
+
 ### Who backs up SDB itself
 
 `sdb.db` (in the `sdb-data` volume) holds every repository password, encrypted
@@ -208,6 +233,8 @@ internal/usecase/   business orchestration (phase 3)
 internal/infra/     SQLite, Docker SDK, Restic, crypto adapters (phase 2)
 internal/api/http/  Gin REST API + WebSocket hub (phase 4)
 web/                Vue 3 frontend (phase 5)
+docs/               operating runbook
+deploy/             Prometheus alert rules
 ```
 
 The domain layer defines every port (`UserRepository`, `ContainerRuntime`,
@@ -312,3 +339,5 @@ logs on first start.
 - [x] Secondary copies (3-2-1) — `restic copy` to a second repository,
       inline after each backup plus a reconciliation pass, replication lag
       measured in both repositories
+- [x] Operations — French runbook, measured RPO/RTO, Prometheus alert rules,
+      offline master-key rotation (`sdb rotate-master-key`)

@@ -1,0 +1,158 @@
+# Regles d'alerte Prometheus pour SDB.
+#
+# Une sauvegarde qui echoue sans que personne ne l'apprenne est le pire mode de
+# defaillance d'un systeme de sauvegarde : l'exploitant se croit couvert
+# jusqu'au jour ou il tente une restauration. Ces regles couvrent les quatre
+# facons de perdre cette couverture SANS voir un seul run rouge :
+#
+#   1. plus rien ne sauvegarde       -> BackupStale / SdbDown
+#   2. la fenetre planifiee est ratee -> ScheduleWindowMissed
+#   3. la seconde copie a decroche    -> ReplicationPending / ReplicationLagHigh
+#   4. plus rien ne PROUVE que c'est restaurable -> VerificationStale
+#
+# Les seuils ci-dessous supposent une sauvegarde quotidienne (cf. docs/RUNBOOK.md,
+# section RPO/RTO). Ajuster `for:` et les durees au rythme reel des
+# planifications : une alerte qui crie a chaque fenetre normale finit ignoree,
+# et une alerte ignoree ne protege de rien.
+#
+# Scrape : GET /metrics derriere SDB_METRICS_TOKEN (jeton statique).
+#   scrape_configs:
+#     - job_name: sdb
+#       authorization: { type: Bearer, credentials: "<SDB_METRICS_TOKEN>" }
+#       static_configs: [{ targets: ["127.0.0.1:8080"] }]
+
+groups:
+  - name: sdb-coverage
+    rules:
+      - alert: SdbDown
+        expr: up{job="sdb"} == 0
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "SDB est injoignable"
+          description: >-
+            SDB a l'arret = aucune sauvegarde. Rien d'autre ne prend le relais :
+            il n'y a pas de haute disponibilite. Voir docs/RUNBOOK.md#sdb-ne-demarre-plus.
+
+      - alert: BackupStale
+        # RPO : age de la derniere sauvegarde REUSSIE, par conteneur.
+        expr: time() - sdb_last_backup_success_timestamp_seconds > 36 * 3600
+        for: 15m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.container }} : aucune sauvegarde reussie depuis plus de 36 h"
+          description: >-
+            Le RPO annonce est depasse. Un run peut echouer en boucle sans
+            alerter si le webhook est absent : verifier l'historique et les logs.
+            Voir docs/RUNBOOK.md#une-sauvegarde-echoue.
+
+      - alert: BackupNeverSucceeded
+        # un conteneur configure dont AUCUN run n'a jamais reussi n'apparait
+        # dans aucune serie : c'est l'absence de metrique qu'il faut voir
+        expr: absent(sdb_last_backup_success_timestamp_seconds)
+        for: 1h
+        labels: { severity: warning }
+        annotations:
+          summary: "Aucune sauvegarde reussie n'a jamais ete enregistree"
+          description: >-
+            Instance neuve, ou toutes les sauvegardes echouent depuis le debut.
+
+      - alert: ScheduleWindowMissed
+        expr: increase(sdb_schedule_missed_runs_total[1h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Fenetre planifiee manquee : {{ $labels.schedule }} ({{ $labels.container }})"
+          description: >-
+            L'echeance est tombee pendant un arret de SDB. Le rattrapage est
+            desactive par defaut (SDB_SCHEDULE_CATCHUP) : declencher le run a la
+            main si la fenetre comptait. Voir docs/RUNBOOK.md#une-fenetre-planifiee-a-ete-manquee.
+
+  - name: sdb-second-copy
+    rules:
+      - alert: ReplicationPending
+        expr: sdb_replication_pending_snapshots > 0
+        for: 2h
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.copy }} : {{ $value }} snapshot(s) non repliques depuis {{ $labels.source }}"
+          description: >-
+            La regle 3-2-1 n'est plus satisfaite pour ces snapshots : ils
+            n'existent qu'a un exemplaire. La passe de reconciliation retente
+            toutes les SDB_REPLICATION_INTERVAL ; si le compteur ne redescend
+            pas, la destination est en panne.
+            Voir docs/RUNBOOK.md#la-copie-secondaire-a-decroche.
+
+      - alert: ReplicationLagHigh
+        expr: sdb_replication_lag_seconds > 48 * 3600
+        for: 30m
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.copy }} : le plus ancien snapshot non copie remonte a {{ $value | humanizeDuration }}"
+          description: >-
+            La replication est cassee depuis assez longtemps pour que la
+            retention du depot principal commence a effacer des snapshots qui
+            n'ont jamais ete copies.
+
+  - name: sdb-restorability
+    rules:
+      - alert: VerificationStale
+        # SDB_VERIFY_INTERVAL=168h par defaut : deux fenetres ratees = probleme
+        expr: time() - sdb_verification_last_success_timestamp_seconds > 15 * 24 * 3600
+        for: 1h
+        labels: { severity: critical }
+        annotations:
+          summary: "{{ $labels.storage }} : plus aucune preuve recente de restaurabilite"
+          description: >-
+            La derniere restauration de verification reussie remonte a plus de
+            15 jours. `restic check` prouve que le depot est coherent, pas que
+            les fichiers se materialisent : sans verification, la
+            restaurabilite redevient une hypothese.
+            Voir docs/RUNBOOK.md#une-verification-echoue.
+
+      - alert: VerificationDisabled
+        expr: absent(sdb_verification_last_success_timestamp_seconds)
+        for: 24h
+        labels: { severity: warning }
+        annotations:
+          summary: "Aucune restauration de verification n'a jamais reussi"
+          description: >-
+            SDB_VERIFY_INTERVAL est probablement a 0 (defaut). Rien ne prouve
+            que les sauvegardes sont restaurables, et le RTO annonce n'a aucune
+            mesure derriere lui.
+
+      - alert: RestoreTimeAboveTarget
+        # RTO : la verification est une restauration REELLE, chronometree.
+        # Ajuster le seuil au RTO reellement annonce dans le runbook.
+        expr: sdb_verification_restore_duration_seconds > 1800
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $labels.storage }} : restauration mesuree a {{ $value | humanizeDuration }}"
+          description: >-
+            La duree mesuree depasse le RTO annonce. Le volume a grossi, le lien
+            vers le depot s'est degrade, ou le depot a besoin d'un prune.
+
+  - name: sdb-jobs
+    rules:
+      - alert: BackupFailureRate
+        expr: increase(sdb_backups_total{status="failed"}[6h]) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value }} sauvegarde(s) en echec sur les 6 dernieres heures"
+
+      - alert: BackupWarnings
+        # `warning` couvre notamment une copie secondaire ratee : le snapshot
+        # existe, la regle 3-2-1 non
+        expr: increase(sdb_backups_total{status="warning"}[6h]) > 0
+        labels: { severity: info }
+        annotations:
+          summary: "{{ $value }} sauvegarde(s) terminee(s) avec avertissement"
+
+      - alert: RestoreFailed
+        expr: increase(sdb_restores_total{status="failed"}[1h]) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Restauration en echec"
+          description: >-
+            Une restauration ratee est soit un sinistre en cours qui se passe
+            mal, soit une verification qui vient de reveler un depot inexploitable.

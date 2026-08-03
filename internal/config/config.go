@@ -325,6 +325,12 @@ func getenvDuration(key string, def time.Duration) (time.Duration, error) {
 	return d, nil
 }
 
+// Secret : lecture d'un secret isolé, hors du chargement complet — même
+// convention KEY_FILE que le reste. Sert aux commandes de maintenance, qui ont
+// besoin d'une valeur (la nouvelle clé maître) que la configuration du démon
+// ne connaît pas.
+func Secret(key string) (string, error) { return getSecret(key) }
+
 // getSecret : KEY_FILE (secret Docker) prioritaire sur KEY.
 func getSecret(key string) (string, error) {
 	if path := os.Getenv(key + "_FILE"); path != "" {

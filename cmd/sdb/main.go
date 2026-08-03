@@ -28,7 +28,23 @@ import (
 var version = "dev"
 
 func main() {
-	if err := run(); err != nil {
+	// Sans argument : le démon. Les commandes de maintenance sont des
+	// sous-commandes plutôt que des routes d'API — elles touchent tous les
+	// secrets à la fois et n'ont rien à faire dans la surface exposée.
+	action := run
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "rotate-master-key":
+			action = rotateMasterKey
+		case "help", "-h", "--help":
+			fmt.Print(usage)
+			return
+		default:
+			fmt.Fprintf(os.Stderr, "sdb: unknown command %q\n\n%s", os.Args[1], usage)
+			os.Exit(2)
+		}
+	}
+	if err := action(); err != nil {
 		fmt.Fprintf(os.Stderr, "sdb: fatal: %v\n", err)
 		os.Exit(1)
 	}
@@ -166,7 +182,12 @@ func run() error {
 	// preuve de restaurabilite : extrait reellement le dernier snapshot dans
 	// un volume jetable. Les echecs partent par le meme canal d'alerte que
 	// n'importe quel run rate.
-	verifySvc := usecase.NewVerificationService(runtime, engine, storageRepo, restoreHistory, publisher, logger)
+	verifySvc := usecase.NewVerificationService(runtime, engine, storageRepo, restoreHistory, publisher, logger,
+		// chronometrage de la restauration : c'est la seule base honnete d'un
+		// RTO annonce
+		usecase.WithVerificationObserver(func(res usecase.VerificationResult) {
+			collector.RecordVerification(res.StorageName, res.Duration.Seconds(), res.Succeeded)
+		}))
 	if cfg.Maintenance.VerifyInterval > 0 {
 		go verifySvc.Schedule(ctx, cfg.Maintenance.VerifyInterval)
 	} else {

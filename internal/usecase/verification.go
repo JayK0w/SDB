@@ -33,9 +33,30 @@ type VerificationService struct {
 	history    domain.RestoreHistoryRepository
 	publisher  domain.EventPublisher
 	logger     *slog.Logger
+	observer   func(VerificationResult)
 
 	mu      sync.Mutex
 	running bool
+}
+
+// VerificationResult : ce qu'une vérification vient de démontrer. La DURÉE est
+// la donnée qui manquait pour parler de RTO autrement qu'en promesse : c'est
+// une restauration réelle, chronométrée, pas une estimation.
+type VerificationResult struct {
+	StorageID   int64
+	StorageName string
+	SnapshotID  string
+	Duration    time.Duration
+	Succeeded   bool
+}
+
+// VerificationOption : réglage optionnel du service, appliqué à la construction.
+type VerificationOption func(*VerificationService)
+
+// WithVerificationObserver : appelé après chaque vérification terminée. Sert au
+// collecteur Prometheus, que le usecase n'a pas à connaître.
+func WithVerificationObserver(fn func(VerificationResult)) VerificationOption {
+	return func(s *VerificationService) { s.observer = fn }
 }
 
 func NewVerificationService(
@@ -45,14 +66,19 @@ func NewVerificationService(
 	history domain.RestoreHistoryRepository,
 	publisher domain.EventPublisher,
 	logger *slog.Logger,
+	opts ...VerificationOption,
 ) *VerificationService {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &VerificationService{
+	s := &VerificationService{
 		containers: containers, engine: engine, storages: storages,
 		history: history, publisher: publisher, logger: logger,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // VerifyStorage : vérifie le dernier snapshot d'un dépôt. Bloquant — appelé
@@ -128,6 +154,15 @@ func (s *VerificationService) VerifyStorage(ctx context.Context, storageID int64
 	cancel()
 
 	s.finish(ctx, rec, verifyErr, log)
+	if s.observer != nil {
+		s.observer(VerificationResult{
+			StorageID: storage.ID, StorageName: storage.Name, SnapshotID: latest.ID,
+			// mesurée sur les horodatages persistés : c'est la durée que
+			// l'exploitant relira dans l'historique
+			Duration:  rec.EndTime.Sub(rec.StartTime),
+			Succeeded: verifyErr == nil,
+		})
+	}
 	if verifyErr != nil {
 		return rec, verifyErr
 	}

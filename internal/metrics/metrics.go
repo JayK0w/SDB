@@ -25,6 +25,9 @@ type Collector struct {
 
 	replicationPending *prometheus.GaugeVec
 	replicationLag     *prometheus.GaugeVec
+
+	verifyDuration    *prometheus.GaugeVec
+	verifyLastSuccess *prometheus.GaugeVec
 }
 
 var _ domain.EventPublisher = (*Collector)(nil)
@@ -71,6 +74,19 @@ func New(version string) *Collector {
 			Name: "sdb_replication_lag_seconds",
 			Help: "Age of the OLDEST snapshot not yet replicated to the secondary copy, 0 when fully replicated.",
 		}, []string{"copy", "source"}),
+		// RTO mesure et non promis : duree d'une restauration REELLE du dernier
+		// snapshot, chronometree a chaque verification.
+		verifyDuration: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "sdb_verification_restore_duration_seconds",
+			Help: "Duration of the last verification restore, per storage — the measured basis for an announced RTO.",
+		}, []string{"storage"}),
+		// alerte type : plus aucune preuve RECENTE de restaurabilite. Une
+		// verification qui a cesse de tourner est indistinguable d'une
+		// verification qui reussit, sauf par cette date.
+		verifyLastSuccess: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "sdb_verification_last_success_timestamp_seconds",
+			Help: "Unix time of the last successful verification restore, per storage (alert when stale).",
+		}, []string{"storage"}),
 	}
 
 	info := prometheus.NewGauge(prometheus.GaugeOpts{
@@ -82,7 +98,7 @@ func New(version string) *Collector {
 
 	registry.MustRegister(
 		c.backupsTotal, c.restoresTotal, c.bytesTotal, c.runningJobs, c.lastSuccess, c.missedRuns,
-		c.replicationPending, c.replicationLag, info,
+		c.replicationPending, c.replicationLag, c.verifyDuration, c.verifyLastSuccess, info,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -133,6 +149,16 @@ func (c *Collector) Handler() http.Handler {
 func (c *Collector) RecordReplication(copyName, sourceName string, pending int, lagSeconds float64) {
 	c.replicationPending.WithLabelValues(copyName, sourceName).Set(float64(pending))
 	c.replicationLag.WithLabelValues(copyName, sourceName).Set(lagSeconds)
+}
+
+// RecordVerification : resultat d'une restauration de verification. La duree
+// est publiee meme en echec — un echec lent et un echec immediat ne se
+// diagnostiquent pas pareil.
+func (c *Collector) RecordVerification(storage string, seconds float64, succeeded bool) {
+	c.verifyDuration.WithLabelValues(storage).Set(seconds)
+	if succeeded {
+		c.verifyLastSuccess.WithLabelValues(storage).SetToCurrentTime()
+	}
 }
 
 // RecordMissedRuns : echeances tombees pendant un arret de SDB.
