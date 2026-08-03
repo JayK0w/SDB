@@ -34,3 +34,14 @@ web-build:
 
 docker-build:
 	docker build --build-arg VERSION=$(VERSION) -t sdb:latest .
+
+.PHONY: test-integration
+## Tests d'integration contre un VRAI restic et un vrai depot (Docker requis).
+## Exclus du `go test ./...` par le tag de build.
+test-integration:
+	go test -tags=integration -timeout 15m ./internal/infra/restic/...
+
+.PHONY: vulncheck
+## Scan de vulnerabilites avec exceptions declarees dans .govulncheck-allow.
+vulncheck:
+	bash scripts/vulncheck.sh

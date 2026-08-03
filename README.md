@@ -123,6 +123,20 @@ Two things close that:
 2. **Back up `sdb-data`** like any other volume, to a repository whose
    password you hold independently.
 
+### Integration tests
+
+Most of the suite drives restic through test doubles: it proves SDB builds
+the right commands, never that restic understands them. A restic upgrade
+could change its `--json` output, an exit code or a flag name and every test
+would stay green — the breakage would surface in production, at restore time.
+
+`make test-integration` (a dedicated CI job, `-tags=integration`) runs the
+real image against a real repository: init, backup, snapshot listing, clone
+restore, `--verify`, `--read-data-subset` check, retention with prune, and
+the unknown-snapshot failure path. It asserts on the *restored bytes*, not
+on the command line — a mutation reintroducing the original clone bug fails
+it with `restored content = ""`.
+
 ### Missed schedules
 
 A schedule whose window elapsed while SDB was down is reported on startup
