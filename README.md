@@ -73,6 +73,7 @@ one move. The following controls exist to break that:
 | **Strict partial backups** — restic exit 3 (unreadable source files) fails the run instead of passing as a warning. | `true` | `SDB_BACKUP_STRICT_PARTIAL` |
 | **Data-reading integrity checks** — `restic check --read-data-subset`; without it only repository structure is verified and silent pack corruption survives until a restore. | `5%` | `SDB_CHECK_READ_DATA_SUBSET` |
 | **Outbound alerting** — non-blocking webhook on failed/warning runs. Payload carries no credentials, endpoints or raw restic output. `SDB_ALERT_FORMAT=slack` renders the Incoming Webhook schema (also understood by Mattermost and Rocket.Chat); the default `sdb` posts native JSON for a generic receiver. An unknown value refuses to start rather than silently falling back — a typo would otherwise produce alerts Slack rejects, unnoticed. | off | `SDB_ALERT_WEBHOOK`, `SDB_ALERT_FORMAT`, `SDB_ALERT_TIMEOUT` |
+| **Revocable sessions** — every JWT carries the account's token generation, re-checked against the database on each request. Deleting an account, changing a role, changing a password, or `POST /users/:id/revoke-sessions` invalidates existing tokens immediately. Costs one integer read per authenticated request; caching it would reintroduce the revocation delay this removes. | enforced | — |
 | **HTTP hardening** — strict CSP, `nosniff`, `DENY` framing, 1 MiB body cap, per-user rate limit on writes. HSTS only under TLS. | enforced | — |
 | **Verification restores** — the latest snapshot of every repository is *actually extracted* into a disposable `sdb-verify-*` volume with `restic restore --verify`, then the volume is destroyed. | off | `SDB_VERIFY_INTERVAL` |
 | **Missed-window detection** — schedules whose slot elapsed while SDB was down are logged and counted in `sdb_schedule_missed_runs_total`. Catch-up replays at most one run per schedule. | detection on, catch-up off | `SDB_SCHEDULE_CATCHUP` |
@@ -173,6 +174,7 @@ over the WebSocket.
 | GET | `/ws/metrics` | user | WebSocket event stream (`?token=`) |
 | GET | `/metrics` | token | Prometheus metrics (static `SDB_METRICS_TOKEN`; disabled if unset) |
 | GET/POST/PUT/DELETE | `/users...` | admin | User management (password change: self or admin) |
+| POST | `/users/:id/revoke-sessions` | self or admin | Invalidate every token of that account |
 
 ## Storage backends
 

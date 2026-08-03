@@ -117,3 +117,24 @@ func (s *Server) handleDeleteUser(c *gin.Context) {
 	}
 	c.Status(http.StatusNoContent)
 }
+
+// handleRevokeSessions : invalide immediatement toutes les sessions d'un
+// compte. Reserve a l'admin ou au titulaire du compte -- meme regle que le
+// changement de mot de passe, car c'est le meme geste de reaction a une fuite.
+func (s *Server) handleRevokeSessions(c *gin.Context) {
+	id, err := pathID(c)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	claims := currentClaims(c)
+	if claims == nil || (!claims.IsAdmin() && claims.UserID() != id) {
+		s.respondError(c, fmt.Errorf("%w: you may only revoke your own sessions", domain.ErrForbidden))
+		return
+	}
+	if err := s.svc.Auth.RevokeSessions(c.Request.Context(), id); err != nil {
+		s.respondError(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}

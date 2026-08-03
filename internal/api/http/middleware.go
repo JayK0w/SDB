@@ -111,6 +111,18 @@ func (s *Server) authRequired() gin.HandlerFunc {
 			s.respondError(c, err)
 			return
 		}
+		// La signature prouve seulement que le jeton a été émis par nous.
+		// Elle ne dit rien de ce qui s'est passé DEPUIS : compte supprimé,
+		// rôle retiré, mot de passe changé, sessions révoquées. D'où cette
+		// vérification de génération à chaque requête.
+		//
+		// Coût assumé : une lecture SQLite locale d'un entier par requête
+		// authentifiée. Un cache la rendrait gratuite mais réintroduirait un
+		// délai de révocation — précisément ce qu'on supprime ici.
+		if err := s.svc.Auth.ValidateSession(c.Request.Context(), claims.UserID(), claims.Ver); err != nil {
+			s.respondError(c, err)
+			return
+		}
 		c.Set(userContextKey, claims)
 		c.Next()
 	}

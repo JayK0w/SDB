@@ -1,0 +1,22 @@
+-- v0.6 : revocation des sessions.
+--
+-- Un JWT est autoportant : une fois emis, il reste valable jusqu'a son
+-- expiration quoi qu'il arrive cote serveur. Supprimer un compte ou lui
+-- retirer son role admin ne mettait donc PAS fin a ses sessions, et un jeton
+-- vole restait utilisable. Sur un systeme capable d'ecraser des volumes de
+-- production, c'est inacceptable.
+--
+-- token_version est la generation des jetons du compte : elle est inscrite
+-- dans chaque JWT emis et revérifiée a chaque requete. L'incrementer invalide
+-- instantanement toutes les sessions de l'utilisateur.
+--
+-- Un compteur plutot qu'une liste de revocation : cette derniere devrait
+-- stocker chaque jeton jusqu'a peremption puis etre purgee, alors qu'un
+-- entier ne grandit jamais.
+--
+-- Defaut 1 : les comptes existants demarrent a la premiere generation. Les
+-- jetons emis AVANT cette migration ne portent pas de version et seront
+-- rejetes -- c'est voulu, une montee de version qui renforce la securite ne
+-- doit pas laisser survivre des sessions non verifiables.
+
+ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 1;

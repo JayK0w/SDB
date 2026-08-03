@@ -16,6 +16,13 @@ type UserRepository interface {
 	Update(ctx context.Context, user *User) error
 	Delete(ctx context.Context, id int64) error
 	Count(ctx context.Context) (int64, error) // détection premier démarrage
+	// TokenVersion : génération courante des jetons du compte. Lecture
+	// dédiée plutôt qu'un GetByID complet : elle est faite à CHAQUE requête
+	// authentifiée, et il n'y a aucune raison de promener le hash du mot de
+	// passe dans la couche de livraison à cette fréquence.
+	// ErrNotFound si le compte n'existe plus — ses jetons doivent alors
+	// cesser d'être acceptés.
+	TokenVersion(ctx context.Context, id int64) (int64, error)
 }
 
 type StorageRepository interface {

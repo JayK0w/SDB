@@ -69,7 +69,9 @@ func (s *AuthService) CreateUser(ctx context.Context, username, password string,
 	if err != nil {
 		return nil, fmt.Errorf("hashing password: %w", err)
 	}
-	u := &domain.User{Username: username, PasswordHash: hash, Role: role}
+	// TokenVersion 1 et non 0 : le zero de Go serait indistinguable d'un
+	// champ jamais renseigne, et un jeton force a 0 passerait la comparaison
+	u := &domain.User{Username: username, PasswordHash: hash, Role: role, TokenVersion: 1}
 	if err := s.users.Create(ctx, u); err != nil {
 		return nil, err
 	}
@@ -79,6 +81,50 @@ func (s *AuthService) CreateUser(ctx context.Context, username, password string,
 
 func (s *AuthService) ListUsers(ctx context.Context) ([]domain.User, error) {
 	return s.users.List(ctx)
+}
+
+// ValidateSession : le jeton porte-t-il encore la génération courante du
+// compte ? Appelée à chaque requête authentifiée.
+//
+// La règle vit ici et non dans le middleware HTTP : ce qui rend une session
+// valide est une décision métier, la couche de livraison ne fait que la
+// consulter.
+//
+// Un compte supprimé remonte ErrNotFound du dépôt et devient donc
+// ErrUnauthorized : ses jetons cessent d'être acceptés sans qu'on ait eu
+// besoin de les révoquer un par un.
+func (s *AuthService) ValidateSession(ctx context.Context, userID, version int64) error {
+	current, err := s.users.TokenVersion(ctx, userID)
+	if errors.Is(err, domain.ErrNotFound) {
+		return fmt.Errorf("%w: account no longer exists", domain.ErrUnauthorized)
+	}
+	if err != nil {
+		return fmt.Errorf("checking session validity: %w", err)
+	}
+	if version != current {
+		return fmt.Errorf("%w: session revoked", domain.ErrUnauthorized)
+	}
+	return nil
+}
+
+// RevokeSessions : invalide immédiatement toutes les sessions du compte.
+func (s *AuthService) RevokeSessions(ctx context.Context, userID int64) error {
+	u, err := s.users.GetByID(ctx, userID)
+	if err != nil {
+		return err
+	}
+	if err := s.bumpTokenVersion(ctx, u); err != nil {
+		return err
+	}
+	s.logger.Info("sessions revoked", "username", u.Username, "user_id", userID)
+	return nil
+}
+
+// bumpTokenVersion : passe le compte à la génération suivante. Tout jeton
+// deja emis devient invalide au prochain appel.
+func (s *AuthService) bumpTokenVersion(ctx context.Context, u *domain.User) error {
+	u.TokenVersion++
+	return s.users.Update(ctx, u)
 }
 
 func (s *AuthService) UpdatePassword(ctx context.Context, userID int64, newPassword string) error {
@@ -94,6 +140,10 @@ func (s *AuthService) UpdatePassword(ctx context.Context, userID int64, newPassw
 		return fmt.Errorf("hashing password: %w", err)
 	}
 	u.PasswordHash = hash
+	// changer son mot de passe deconnecte PARTOUT, y compris la session
+	// courante : c'est le geste qu'on attend apres une fuite d'identifiants,
+	// et laisser survivre les sessions existantes le viderait de son sens
+	u.TokenVersion++
 	return s.users.Update(ctx, u)
 }
 
@@ -111,6 +161,10 @@ func (s *AuthService) UpdateRole(ctx context.Context, userID int64, role domain.
 		}
 	}
 	u.Role = role
+	// un jeton porte le role au moment de son emission : sans revocation,
+	// retirer les droits admin a quelqu'un le laisserait admin jusqu'a
+	// expiration de son jeton
+	u.TokenVersion++
 	return s.users.Update(ctx, u)
 }
 

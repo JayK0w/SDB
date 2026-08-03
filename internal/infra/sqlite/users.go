@@ -18,7 +18,7 @@ var _ domain.UserRepository = (*UserRepo)(nil)
 
 func NewUserRepo(db *sql.DB) *UserRepo { return &UserRepo{db: db} }
 
-const userColumns = `id, username, password_hash, role, created_at, updated_at`
+const userColumns = `id, username, password_hash, role, token_version, created_at, updated_at`
 
 func (r *UserRepo) Create(ctx context.Context, u *domain.User) error {
 	if u.CreatedAt.IsZero() {
@@ -28,8 +28,8 @@ func (r *UserRepo) Create(ctx context.Context, u *domain.User) error {
 		u.UpdatedAt = u.CreatedAt
 	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO users (username, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?)`,
-		u.Username, u.PasswordHash, string(u.Role), fmtTime(u.CreatedAt), fmtTime(u.UpdatedAt))
+		`INSERT INTO users (username, password_hash, role, token_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		u.Username, u.PasswordHash, string(u.Role), u.TokenVersion, fmtTime(u.CreatedAt), fmtTime(u.UpdatedAt))
 	if isUniqueViolation(err) {
 		return fmt.Errorf("%w: username %q", domain.ErrAlreadyExists, u.Username)
 	}
@@ -75,8 +75,8 @@ func (r *UserRepo) List(ctx context.Context) ([]domain.User, error) {
 func (r *UserRepo) Update(ctx context.Context, u *domain.User) error {
 	u.UpdatedAt = time.Now().UTC()
 	res, err := r.db.ExecContext(ctx,
-		`UPDATE users SET username = ?, password_hash = ?, role = ?, updated_at = ? WHERE id = ?`,
-		u.Username, u.PasswordHash, string(u.Role), fmtTime(u.UpdatedAt), u.ID)
+		`UPDATE users SET username = ?, password_hash = ?, role = ?, token_version = ?, updated_at = ? WHERE id = ?`,
+		u.Username, u.PasswordHash, string(u.Role), u.TokenVersion, fmtTime(u.UpdatedAt), u.ID)
 	if isUniqueViolation(err) {
 		return fmt.Errorf("%w: username %q", domain.ErrAlreadyExists, u.Username)
 	}
@@ -103,7 +103,7 @@ func (r *UserRepo) Count(ctx context.Context) (int64, error) {
 func scanUser(row rowScanner) (*domain.User, error) {
 	var u domain.User
 	var role, createdAt, updatedAt string
-	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &role, &createdAt, &updatedAt)
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &role, &u.TokenVersion, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -114,4 +114,18 @@ func scanUser(row rowScanner) (*domain.User, error) {
 	u.CreatedAt = parseTime(createdAt)
 	u.UpdatedAt = parseTime(updatedAt)
 	return &u, nil
+}
+
+// TokenVersion : génération courante des jetons du compte. Appelée à chaque
+// requête authentifiée — d'où la lecture d'une seule colonne.
+func (r *UserRepo) TokenVersion(ctx context.Context, id int64) (int64, error) {
+	var v int64
+	err := r.db.QueryRowContext(ctx, `SELECT token_version FROM users WHERE id = ?`, id).Scan(&v)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, domain.ErrNotFound
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reading token version: %w", err)
+	}
+	return v, nil
 }

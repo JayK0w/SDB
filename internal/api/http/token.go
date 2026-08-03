@@ -14,6 +14,10 @@ import (
 type Claims struct {
 	Username string `json:"username"`
 	Role     string `json:"role"`
+	// Ver : génération des jetons du compte au moment de l'émission. Comparée
+	// a la valeur en base a chaque requête ; toute divergence = session
+	// révoquée. C'est ce qui rend un JWT autoportant révocable.
+	Ver int64 `json:"ver"`
 	jwt.RegisteredClaims
 }
 
@@ -40,6 +44,7 @@ func (m *TokenManager) Issue(user *domain.User) (token string, expiresAt time.Ti
 	claims := &Claims{
 		Username: user.Username,
 		Role:     string(user.Role),
+		Ver:      user.TokenVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    "sdb",
 			Subject:   strconv.FormatInt(user.ID, 10),

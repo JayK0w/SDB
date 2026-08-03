@@ -1,29 +1,110 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/standalone-docker-backup/sdb/internal/domain"
+	"github.com/standalone-docker-backup/sdb/internal/usecase"
 )
 
-func testServer(t *testing.T) *Server {
-	t.Helper()
-	hub := NewHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	return NewServer(
-		Options{Addr: "127.0.0.1:0", JWTSecret: "test-secret-value", TokenTTL: time.Hour},
-		Services{}, hub, slog.New(slog.NewTextHandler(io.Discard, nil)),
-	)
+// stubUsers : depot utilisateurs minimal. authRequired verifie desormais la
+// generation du jeton a chaque requete, il faut donc un vrai AuthService.
+type stubUsers struct {
+	mu    sync.Mutex
+	byID  map[int64]domain.User
+	calls int // lectures de version, pour verifier qu'on interroge bien la base
 }
 
+func newStubUsers(users ...domain.User) *stubUsers {
+	m := &stubUsers{byID: map[int64]domain.User{}}
+	for _, u := range users {
+		m.byID[u.ID] = u
+	}
+	return m
+}
+
+func (m *stubUsers) TokenVersion(_ context.Context, id int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls++
+	u, ok := m.byID[id]
+	if !ok {
+		return 0, domain.ErrNotFound
+	}
+	return u.TokenVersion, nil
+}
+
+func (m *stubUsers) bump(id int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u := m.byID[id]
+	u.TokenVersion++
+	m.byID[id] = u
+}
+
+func (m *stubUsers) remove(id int64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.byID, id)
+}
+
+func (m *stubUsers) GetByID(_ context.Context, id int64) (*domain.User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.byID[id]
+	if !ok {
+		return nil, domain.ErrNotFound
+	}
+	out := u
+	return &out, nil
+}
+
+func (m *stubUsers) Create(context.Context, *domain.User) error { return nil }
+func (m *stubUsers) GetByUsername(context.Context, string) (*domain.User, error) {
+	return nil, domain.ErrNotFound
+}
+func (m *stubUsers) List(context.Context) ([]domain.User, error) { return nil, nil }
+func (m *stubUsers) Update(context.Context, *domain.User) error  { return nil }
+func (m *stubUsers) Delete(context.Context, int64) error         { return nil }
+func (m *stubUsers) Count(context.Context) (int64, error)        { return 1, nil }
+
+func testServer(t *testing.T) (*Server, *stubUsers) {
+	t.Helper()
+	discard := slog.New(slog.NewTextHandler(io.Discard, nil))
+	users := newStubUsers(
+		domain.User{ID: 1, Username: "admin", Role: domain.RoleAdmin, TokenVersion: 1},
+		domain.User{ID: 2, Username: "bob", Role: domain.RoleUser, TokenVersion: 1},
+	)
+	srv := NewServer(
+		Options{Addr: "127.0.0.1:0", JWTSecret: "test-secret-value", TokenTTL: time.Hour},
+		Services{Auth: usecase.NewAuthService(users, fakeHasher{}, discard)},
+		NewHub(discard), discard,
+	)
+	return srv, users
+}
+
+type fakeHasher struct{}
+
+func (fakeHasher) Hash(p string) (string, error)    { return "h:" + p, nil }
+func (fakeHasher) Verify(p, h string) (bool, error) { return h == "h:"+p, nil }
+
+// tokenFor : jeton portant la generation COURANTE du compte.
 func tokenFor(t *testing.T, s *Server, role domain.Role) string {
 	t.Helper()
-	tok, _, err := s.tokens.Issue(&domain.User{ID: 1, Username: "u", Role: role})
+	id := int64(1)
+	name := "admin"
+	if role == domain.RoleUser {
+		id, name = 2, "bob"
+	}
+	tok, _, err := s.tokens.Issue(&domain.User{ID: id, Username: name, Role: role, TokenVersion: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +130,7 @@ func do(s *Server, method, path, token string, body string) *httptest.ResponseRe
 // Une restauration écrase des données de production : elle doit être fermée
 // au rôle `user`, quel que soit son contenu.
 func TestRestoreEndpointsRequireAdmin(t *testing.T) {
-	s := testServer(t)
+	s, _ := testServer(t)
 	userTok := tokenFor(t, s, domain.RoleUser)
 
 	cases := []struct {
@@ -70,7 +151,7 @@ func TestRestoreEndpointsRequireAdmin(t *testing.T) {
 // La lecture de l'historique reste ouverte : restreindre l'écriture ne doit
 // pas aveugler les comptes non-admin.
 func TestRestoreHistoryStaysReadableByUsers(t *testing.T) {
-	s := testServer(t)
+	s, _ := testServer(t)
 	w := do(s, http.MethodGet, "/api/v1/restores/history", tokenFor(t, s, domain.RoleUser), "")
 	if w.Code == http.StatusForbidden {
 		t.Fatal("restore history must stay readable for the user role")
@@ -78,7 +159,7 @@ func TestRestoreHistoryStaysReadableByUsers(t *testing.T) {
 }
 
 func TestRestoreEndpointsRejectAnonymous(t *testing.T) {
-	s := testServer(t)
+	s, _ := testServer(t)
 	w := do(s, http.MethodPost, "/api/v1/restores", "", `{"storage_id":1}`)
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("anonymous restore -> %d, want 401", w.Code)
@@ -86,7 +167,7 @@ func TestRestoreEndpointsRejectAnonymous(t *testing.T) {
 }
 
 func TestSecurityHeadersArePresent(t *testing.T) {
-	s := testServer(t)
+	s, _ := testServer(t)
 	// requête anonyme : les en-têtes sont posés avant l'authentification, et
 	// la réponse 401 n'atteint aucun usecase (Services est vide ici).
 	w := do(s, http.MethodGet, "/api/v1/health", "", "")
@@ -116,7 +197,7 @@ func TestSecurityHeadersArePresent(t *testing.T) {
 // Sans plafond, un client authentifié fait gonfler la mémoire du processus
 // à volonté.
 func TestOversizedBodyIsRejected(t *testing.T) {
-	s := testServer(t)
+	s, _ := testServer(t)
 	huge := `{"storage_id":1,"snapshot_id":"` + strings.Repeat("A", maxBodyBytes+1024) + `"}`
 
 	w := do(s, http.MethodPost, "/api/v1/restores", tokenFor(t, s, domain.RoleAdmin), huge)

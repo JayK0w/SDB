@@ -54,6 +54,13 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// Sans AuthService, authRequired ne peut pas verifier la revocation de
+	// session : on echoue au DEMARRAGE plutot qu'a la premiere requete. Une
+	// dependance de securite absente doit etre un refus de demarrer, jamais
+	// une verification silencieusement sautee.
+	if svc.Auth == nil {
+		panic("httpapi: Services.Auth is required — session revocation cannot be enforced without it")
+	}
 	s := &Server{
 		logger:       logger,
 		version:      opts.Version,
@@ -110,6 +117,8 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 
 		// changement de mot de passe : soi-même ou admin (vérifié dans le handler)
 		authed.PUT("/users/:id/password", s.handleUpdatePassword)
+		// revocation : soi-meme ou admin (verifie dans le handler)
+		authed.POST("/users/:id/revoke-sessions", s.handleRevokeSessions)
 
 		admin := authed.Group("", s.adminRequired())
 		{

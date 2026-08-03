@@ -530,6 +530,16 @@ func (m *memUsers) Delete(_ context.Context, id int64) error {
 	return nil
 }
 
+func (m *memUsers) TokenVersion(_ context.Context, id int64) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.byID[id]
+	if !ok {
+		return 0, domain.ErrNotFound
+	}
+	return u.TokenVersion, nil
+}
+
 func (m *memUsers) Count(context.Context) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
