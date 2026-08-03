@@ -34,7 +34,9 @@ const volumeMounts = computed(() =>
 
 onMounted(async () => {
   try {
-    storages.value = await api.storage.list()
+    // les copies secondaires sont exclues : l'API refuse d'y sauvegarder
+    // directement, les proposer ne produirait qu'une erreur
+    storages.value = (await api.storage.list()).filter((s) => !s.copy_of_storage_id)
     if (storages.value.length > 0) storageId.value = storages.value[0]!.id
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)

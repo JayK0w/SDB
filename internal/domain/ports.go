@@ -121,6 +121,16 @@ type SnapshotEngine interface {
 	// écriture), cf. RestoreSpec.
 	Restore(ctx context.Context, storage *StorageConfig, spec RestoreSpec, events chan<- ProgressEvent) error
 	Snapshots(ctx context.Context, storage *StorageConfig, tags []string) ([]Snapshot, error)
+	// EnsureCopyTarget : initialise le dépôt de copie en HÉRITANT des
+	// paramètres de découpage de sa source (`init --copy-chunker-params`) ;
+	// no-op s'il existe déjà. Sans cet héritage, restic ne re-découpe pas les
+	// fichiers copiés et les données peuvent occuper le double dans la copie.
+	EnsureCopyTarget(ctx context.Context, dst, src *StorageConfig) error
+	// Copy : recopie des snapshots de src vers dst (restic copy). Liste vide =
+	// tous ; restic saute ceux déjà présents. Les deux dépôts sont ouverts par
+	// le MÊME worker : leurs identifiants de backend partagent un unique jeu de
+	// variables d'environnement, d'où le refus des paires en conflit.
+	Copy(ctx context.Context, dst, src *StorageConfig, snapshotIDs []string, events chan<- ProgressEvent) error
 	// Forget : applique la rétention (restic forget, --prune si demandé).
 	Forget(ctx context.Context, storage *StorageConfig, policy RetentionPolicy) error
 	// Check : vérification d'intégrité du dépôt.

@@ -44,8 +44,33 @@ type StorageConfig struct {
 	// ne remplace PAS l'immuabilité côté serveur (rest-server --append-only,
 	// S3 Object Lock) : il la complète en supprimant SDB comme vecteur.
 	AppendOnly bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	// CopyOf : ce dépôt est la COPIE SECONDAIRE du dépôt d'ID indiqué (règle
+	// 3-2-1). 0 = dépôt principal, alimenté par des sauvegardes.
+	//
+	// Le lien est porté par la copie et non par la source : c'est ce qui
+	// permet d'initialiser le dépôt secondaire avec les paramètres de
+	// découpage de sa source (`restic init --copy-chunker-params`, sans quoi
+	// les données copiées peuvent occuper le double), et ça autorise
+	// naturellement plusieurs copies d'un même dépôt.
+	CopyOf    int64
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// IsCopyTarget : dépôt alimenté par réplication, pas par sauvegarde.
+func (s *StorageConfig) IsCopyTarget() bool { return s.CopyOf != 0 }
+
+// EnsureBackupTarget : refuse une sauvegarde DIRECTE dans un dépôt de copie.
+// L'état de réplication se lit en comparant les snapshots de la source à ceux
+// de la copie : des snapshots écrits directement dans la copie rendraient cet
+// écart inintelligible, et donc l'alerte « la seconde copie a décroché »
+// silencieusement fausse.
+func (s *StorageConfig) EnsureBackupTarget() error {
+	if s.IsCopyTarget() {
+		return fmt.Errorf("%w: storage %q is a secondary copy of storage %d and only receives replicated snapshots",
+			ErrInvalidInput, s.Name, s.CopyOf)
+	}
+	return nil
 }
 
 // EnsureMutable : garde-fou avant toute opération destructrice.
@@ -68,6 +93,13 @@ func (s *StorageConfig) Validate() error {
 	}
 	if s.ResticPassword == "" {
 		return fmt.Errorf("%w: restic repository password is required", ErrInvalidInput)
+	}
+	if s.CopyOf < 0 {
+		return fmt.Errorf("%w: copy_of_storage_id must be positive", ErrInvalidInput)
+	}
+	// une copie de soi-même n'est pas une seconde copie
+	if s.CopyOf != 0 && s.CopyOf == s.ID {
+		return fmt.Errorf("%w: storage %q cannot be its own secondary copy", ErrInvalidInput, s.Name)
 	}
 	return nil
 }

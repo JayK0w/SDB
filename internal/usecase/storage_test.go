@@ -76,6 +76,98 @@ func TestStorageUpdatePasswordImmutable(t *testing.T) {
 	}
 }
 
+// Une copie secondaire s'initialise DEPUIS sa source, pour hériter de ses
+// paramètres de découpage : c'est irrattrapable après création, un dépôt les
+// garde pour toujours.
+func TestStorageCreateInitialisesCopyFromItsSource(t *testing.T) {
+	ctx := context.Background()
+	svc, _, engine := newStorageFixture()
+
+	primary := &domain.StorageConfig{Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary"}
+	if err := svc.Create(ctx, primary); err != nil {
+		t.Fatal(err)
+	}
+	copyCfg := &domain.StorageConfig{
+		Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", CopyOf: primary.ID,
+	}
+	if err := svc.Create(ctx, copyCfg); err != nil {
+		t.Fatalf("Create(copy) error: %v", err)
+	}
+	if engine.ensureCopies != 1 {
+		t.Fatalf("EnsureCopyTarget calls = %d, want 1 (sinon les paramètres de découpage ne sont pas hérités)", engine.ensureCopies)
+	}
+}
+
+// Une chaîne source → copie → copie rendrait le retard d'un maillon invisible
+// derrière celui du suivant.
+func TestStorageRefusesCopyOfCopy(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := newStorageFixture()
+
+	primary := &domain.StorageConfig{Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary"}
+	if err := svc.Create(ctx, primary); err != nil {
+		t.Fatal(err)
+	}
+	first := &domain.StorageConfig{Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", CopyOf: primary.ID}
+	if err := svc.Create(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+
+	chained := &domain.StorageConfig{Name: "third", Type: domain.StorageLocal, Endpoint: "/srv/third", CopyOf: first.ID}
+	if err := svc.Create(ctx, chained); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("Create(copy of a copy) err = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestStorageRefusesCopyOfMissingSource(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := newStorageFixture()
+
+	cfg := &domain.StorageConfig{Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", CopyOf: 404}
+	if err := svc.Create(ctx, cfg); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Create() err = %v, want ErrNotFound", err)
+	}
+}
+
+// Rebrancher une copie sur une autre source mélangerait deux origines dans un
+// même dépôt ; la détacher laisserait une copie que plus rien ne réconcilie,
+// en la faisant passer pour un dépôt principal sans sauvegarde.
+func TestStorageCopySourceIsImmutable(t *testing.T) {
+	ctx := context.Background()
+	svc, storages, _ := newStorageFixture()
+
+	primary := &domain.StorageConfig{Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary"}
+	other := &domain.StorageConfig{Name: "other", Type: domain.StorageLocal, Endpoint: "/srv/other"}
+	for _, cfg := range []*domain.StorageConfig{primary, other} {
+		if err := svc.Create(ctx, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	copyCfg := &domain.StorageConfig{Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", CopyOf: primary.ID}
+	if err := svc.Create(ctx, copyCfg); err != nil {
+		t.Fatal(err)
+	}
+
+	rebranch := &domain.StorageConfig{
+		ID: copyCfg.ID, Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", CopyOf: other.ID,
+	}
+	if err := svc.Update(ctx, rebranch); !errors.Is(err, domain.ErrInvalidInput) {
+		t.Fatalf("Update(rebranch) err = %v, want ErrInvalidInput", err)
+	}
+
+	// une mise à jour ordinaire n'a pas à répéter le rattachement : 0 = inchangé
+	rename := &domain.StorageConfig{
+		ID: copyCfg.ID, Name: "offsite-renamed", Type: domain.StorageLocal, Endpoint: "/srv/offsite",
+	}
+	if err := svc.Update(ctx, rename); err != nil {
+		t.Fatalf("Update(rename) error: %v", err)
+	}
+	stored, _ := storages.GetByID(ctx, copyCfg.ID)
+	if stored.CopyOf != primary.ID {
+		t.Fatalf("CopyOf = %d after a rename, want %d", stored.CopyOf, primary.ID)
+	}
+}
+
 func TestMaintenanceRunChecksContinuesOnFailure(t *testing.T) {
 	ctx := context.Background()
 	storages := newMemStorages()

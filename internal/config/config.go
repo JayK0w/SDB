@@ -98,6 +98,12 @@ type Maintenance struct {
 	// Coûteux en lecture et en écriture disque : à cadencer plus large que
 	// les vérifications d'intégrité.
 	VerifyInterval time.Duration
+	// ReplicationInterval : intervalle entre deux passes de réconciliation des
+	// copies secondaires (règle 3-2-1). Chaque sauvegarde réussie est déjà
+	// copiée immédiatement ; cette passe rattrape ce que la copie inline a
+	// raté — destination injoignable, SDB arrêté, échec réseau. Sans elle, un
+	// snapshot non copié le reste indéfiniment. 0 = désactivée.
+	ReplicationInterval time.Duration
 	// ScheduleCatchUp : rejouer au démarrage les planifications dont
 	// l'échéance est passée pendant l'arrêt. Désactivé par défaut : une
 	// sauvegarde peut ARRÊTER son conteneur, et rejouer en masse au
@@ -172,6 +178,13 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	// active par defaut : sans copie secondaire configuree la passe ne fait
+	// rien, et la ou il y en a une, la desactiver laisserait les echecs de
+	// copie sans rattrapage
+	replicationInterval, err := getenvDuration("SDB_REPLICATION_INTERVAL", 6*time.Hour)
+	if err != nil {
+		return nil, err
+	}
 
 	cfg := &Config{
 		DataDir: dataDir,
@@ -208,6 +221,8 @@ func Load() (*Config, error) {
 			AlertFormat:     getenv("SDB_ALERT_FORMAT", "sdb"),
 			VerifyInterval:  verifyInterval,
 			ScheduleCatchUp: scheduleCatchUp,
+
+			ReplicationInterval: replicationInterval,
 		},
 		Log: Log{
 			Level:  getenv("SDB_LOG_LEVEL", "info"),
@@ -243,6 +258,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Maintenance.VerifyInterval < 0 {
 		errs = append(errs, errors.New("SDB_VERIFY_INTERVAL must be zero (disabled) or a positive duration"))
+	}
+	if c.Maintenance.ReplicationInterval < 0 {
+		errs = append(errs, errors.New("SDB_REPLICATION_INTERVAL must be zero (disabled) or a positive duration"))
 	}
 	// tcp:// vers le démon Docker = accès root distant : refusé sans mTLS complet
 	if strings.HasPrefix(c.Docker.Host, "tcp://") {

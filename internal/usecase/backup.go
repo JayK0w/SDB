@@ -33,6 +33,10 @@ type BackupService struct {
 	// n'existe pas — le pire mode de défaillance pour de la donnée critique.
 	strictPartial bool
 
+	// replicator : copie du snapshot vers les dépôts secondaires. nil = aucune
+	// copie (le service reste utilisable sans, notamment en test).
+	replicator SnapshotReplicator
+
 	mu      sync.Mutex
 	running map[string]*job // clé = ID conteneur : un seul run à la fois
 	wg      sync.WaitGroup
@@ -45,6 +49,18 @@ type BackupOption func(*BackupService)
 // Actif par défaut ; le désactiver est un choix explicite de tolérance.
 func WithStrictPartial(strict bool) BackupOption {
 	return func(s *BackupService) { s.strictPartial = strict }
+}
+
+// SnapshotReplicator : recopie un snapshot vers les copies secondaires de son
+// dépôt (règle 3-2-1). Implémenté par ReplicationService.
+type SnapshotReplicator interface {
+	ReplicateAfterBackup(ctx context.Context, sourceID, backupID int64, snapshotID string) error
+}
+
+// WithReplicator : branche la copie secondaire à la fin de chaque sauvegarde
+// réussie.
+func WithReplicator(r SnapshotReplicator) BackupOption {
+	return func(s *BackupService) { s.replicator = r }
 }
 
 type job struct {
@@ -89,6 +105,9 @@ func (s *BackupService) Start(ctx context.Context, req domain.BackupRequest) (*d
 	storage, err := s.storages.GetByID(ctx, req.StorageID)
 	if err != nil {
 		return nil, fmt.Errorf("loading storage config: %w", err)
+	}
+	if err := storage.EnsureBackupTarget(); err != nil {
+		return nil, err
 	}
 	target, err := s.containers.Get(ctx, req.ContainerID)
 	if err != nil {
@@ -256,7 +275,26 @@ func (s *BackupService) execute(ctx context.Context, rec *domain.BackupRecord, t
 		}
 	}
 
-	// 6. rétention après succès seulement ; son échec = warning, pas échec.
+	// 6. copie secondaire (3-2-1), AVANT la rétention : appliquer la politique
+	// du dépôt principal d'abord ferait courir le risque d'effacer un snapshot
+	// qui n'existe encore qu'à un seul exemplaire.
+	//
+	// Son échec est un AVERTISSEMENT : le snapshot existe et est restaurable
+	// depuis le dépôt principal — annoncer `failed` ferait croire qu'il n'y a
+	// pas de sauvegarde du tout, ce qui est plus dangereux que le contraire.
+	// Le trou reste visible et rattrapé : alerte sur avertissement, passe de
+	// réconciliation, et sdb_replication_pending_snapshots non nul tant que la
+	// copie manque.
+	if backupErr == nil && s.replicator != nil && rec.SnapshotID != "" {
+		if err := s.replicator.ReplicateAfterBackup(ctx, storage.ID, rec.ID, rec.SnapshotID); err != nil {
+			msg := "secondary copy failed: " + err.Error()
+			warnings = append(warnings, msg)
+			s.event(rec.ID, domain.EventError, msg)
+			log.Error("secondary copy failed", "error", err)
+		}
+	}
+
+	// 7. rétention après succès seulement ; son échec = warning, pas échec.
 	// Un dépôt append-only ne subit jamais forget/prune : la politique est
 	// ignorée bruyamment plutôt que d'effacer des snapshots protégés.
 	if backupErr == nil && req.Retention != nil {

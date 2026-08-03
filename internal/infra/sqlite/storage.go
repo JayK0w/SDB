@@ -24,7 +24,16 @@ func NewStorageRepo(db *sql.DB, cipher domain.Cipher) *StorageRepo {
 	return &StorageRepo{db: db, cipher: cipher}
 }
 
-const storageColumns = `id, name, type, endpoint, credentials_enc, restic_password_enc, append_only, created_at, updated_at`
+const storageColumns = `id, name, type, endpoint, credentials_enc, restic_password_enc, append_only, copy_of_storage_id, created_at, updated_at`
+
+// copyOfValue : 0 en domaine = pas de source, NULL en base — une clé étrangère
+// ne peut pas pointer sur l'id 0.
+func copyOfValue(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
+}
 
 func (r *StorageRepo) seal(cfg *domain.StorageConfig) (creds, password []byte, err error) {
 	rawCreds, err := json.Marshal(cfg.Credentials)
@@ -70,9 +79,13 @@ func (r *StorageRepo) Create(ctx context.Context, cfg *domain.StorageConfig) err
 		cfg.UpdatedAt = cfg.CreatedAt
 	}
 	res, err := r.db.ExecContext(ctx,
-		`INSERT INTO storage_configs (name, type, endpoint, credentials_enc, restic_password_enc, append_only, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, cfg.AppendOnly, fmtTime(cfg.CreatedAt), fmtTime(cfg.UpdatedAt))
+		`INSERT INTO storage_configs (name, type, endpoint, credentials_enc, restic_password_enc, append_only, copy_of_storage_id, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, cfg.AppendOnly, copyOfValue(cfg.CopyOf),
+		fmtTime(cfg.CreatedAt), fmtTime(cfg.UpdatedAt))
+	if isForeignKeyViolation(err) {
+		return fmt.Errorf("%w: no storage with id %d to copy from", domain.ErrNotFound, cfg.CopyOf)
+	}
 	if isUniqueViolation(err) {
 		return fmt.Errorf("%w: storage %q", domain.ErrAlreadyExists, cfg.Name)
 	}
@@ -118,9 +131,14 @@ func (r *StorageRepo) Update(ctx context.Context, cfg *domain.StorageConfig) err
 	cfg.UpdatedAt = time.Now().UTC()
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE storage_configs
-		 SET name = ?, type = ?, endpoint = ?, credentials_enc = ?, restic_password_enc = ?, append_only = ?, updated_at = ?
+		 SET name = ?, type = ?, endpoint = ?, credentials_enc = ?, restic_password_enc = ?, append_only = ?,
+		     copy_of_storage_id = ?, updated_at = ?
 		 WHERE id = ?`,
-		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, cfg.AppendOnly, fmtTime(cfg.UpdatedAt), cfg.ID)
+		cfg.Name, string(cfg.Type), cfg.Endpoint, creds, password, cfg.AppendOnly, copyOfValue(cfg.CopyOf),
+		fmtTime(cfg.UpdatedAt), cfg.ID)
+	if isForeignKeyViolation(err) {
+		return fmt.Errorf("%w: no storage with id %d to copy from", domain.ErrNotFound, cfg.CopyOf)
+	}
 	if isUniqueViolation(err) {
 		return fmt.Errorf("%w: storage %q", domain.ErrAlreadyExists, cfg.Name)
 	}
@@ -132,9 +150,10 @@ func (r *StorageRepo) Update(ctx context.Context, cfg *domain.StorageConfig) err
 
 func (r *StorageRepo) Delete(ctx context.Context, id int64) error {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM storage_configs WHERE id = ?`, id)
-	// FK RESTRICT : refuse si l'historique référence encore ce stockage
+	// FK RESTRICT : refuse si l'historique — ou une copie secondaire —
+	// référence encore ce stockage
 	if isForeignKeyViolation(err) {
-		return fmt.Errorf("%w: storage %d is referenced by backup history", domain.ErrConflict, id)
+		return fmt.Errorf("%w: storage %d is referenced by backup history or by a secondary copy", domain.ErrConflict, id)
 	}
 	if err != nil {
 		return fmt.Errorf("deleting storage config %d: %w", id, err)
@@ -146,7 +165,8 @@ func (r *StorageRepo) scanStorage(row rowScanner) (*domain.StorageConfig, error)
 	var cfg domain.StorageConfig
 	var typ, createdAt, updatedAt string
 	var creds, password []byte
-	err := row.Scan(&cfg.ID, &cfg.Name, &typ, &cfg.Endpoint, &creds, &password, &cfg.AppendOnly, &createdAt, &updatedAt)
+	var copyOf sql.NullInt64
+	err := row.Scan(&cfg.ID, &cfg.Name, &typ, &cfg.Endpoint, &creds, &password, &cfg.AppendOnly, &copyOf, &createdAt, &updatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, domain.ErrNotFound
 	}
@@ -154,6 +174,7 @@ func (r *StorageRepo) scanStorage(row rowScanner) (*domain.StorageConfig, error)
 		return nil, fmt.Errorf("scanning storage config: %w", err)
 	}
 	cfg.Type = domain.StorageType(typ)
+	cfg.CopyOf = copyOf.Int64
 	cfg.CreatedAt = parseTime(createdAt)
 	cfg.UpdatedAt = parseTime(updatedAt)
 	if err := r.unseal(&cfg, creds, password); err != nil {

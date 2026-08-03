@@ -55,19 +55,51 @@ func (s *StorageService) Create(ctx context.Context, cfg *domain.StorageConfig) 
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	// une copie secondaire est initialisée DEPUIS sa source, pour hériter de
+	// ses paramètres de découpage : c'est irrattrapable après coup
+	var source *domain.StorageConfig
+	if cfg.IsCopyTarget() {
+		var err error
+		if source, err = s.copySource(ctx, cfg.CopyOf); err != nil {
+			return err
+		}
+	}
 	if err := s.storages.Create(ctx, cfg); err != nil {
 		return err
 	}
-	if err := s.engine.EnsureRepository(ctx, cfg); err != nil {
+
+	initErr := s.engine.EnsureRepository(ctx, cfg)
+	if source != nil {
+		initErr = s.engine.EnsureCopyTarget(ctx, cfg, source)
+	}
+	if initErr != nil {
 		rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		if delErr := s.storages.Delete(rbCtx, cfg.ID); delErr != nil {
 			s.logger.Error("rolling back unusable storage config", "id", cfg.ID, "error", delErr)
 		}
-		return fmt.Errorf("initialising restic repository: %w", err)
+		return fmt.Errorf("initialising restic repository: %w", initErr)
 	}
-	s.logger.Info("storage created", "name", cfg.Name, "type", cfg.Type)
+	s.logger.Info("storage created", "name", cfg.Name, "type", cfg.Type, "copy_of", cfg.CopyOf)
 	return nil
+}
+
+// copySource : valide la source d'une copie secondaire.
+//
+// Une copie de copie est refusée : les chaînes rendraient l'écart de
+// réplication non interprétable (le retard d'un maillon masque celui du
+// suivant) et créeraient des cycles possibles. Deux copies d'un même dépôt
+// restent parfaitement admises.
+func (s *StorageService) copySource(ctx context.Context, id int64) (*domain.StorageConfig, error) {
+	src, err := s.storages.GetByID(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("loading copy source %d: %w", id, err)
+	}
+	if src.IsCopyTarget() {
+		return nil, fmt.Errorf("%w: storage %q is itself a secondary copy; copy chains are not supported",
+			domain.ErrInvalidInput, src.Name)
+	}
+	return src, nil
 }
 
 func (s *StorageService) Get(ctx context.Context, id int64) (*domain.StorageConfig, error) {
@@ -98,6 +130,18 @@ func (s *StorageService) Update(ctx context.Context, cfg *domain.StorageConfig) 
 	// de la surface d'attaque de l'application.
 	if existing.AppendOnly && !cfg.AppendOnly {
 		return fmt.Errorf("%w: append-only cannot be disabled through the API", domain.ErrForbidden)
+	}
+	// Le rattachement d'une copie secondaire est fixé à la création (0 =
+	// inchangé, comme le mot de passe). Le rebrancher mélangerait dans un même
+	// dépôt les snapshots de deux sources, ce qui rendrait l'écart de
+	// réplication ininterprétable des deux côtés ; le détacher laisserait une
+	// copie que plus rien ne réconcilie, en la faisant passer pour un dépôt
+	// principal sans sauvegarde.
+	switch cfg.CopyOf {
+	case 0, existing.CopyOf:
+		cfg.CopyOf = existing.CopyOf
+	default:
+		return fmt.Errorf("%w: the copy source of a storage cannot be changed after creation", domain.ErrInvalidInput)
 	}
 	if err := cfg.Validate(); err != nil {
 		return err

@@ -30,12 +30,13 @@ type Options struct {
 
 // Services : usecases exposés par la couche de livraison.
 type Services struct {
-	Auth       *usecase.AuthService
-	Containers *usecase.ContainerService
-	Storages   *usecase.StorageService
-	Backups    *usecase.BackupService
-	Restores   *usecase.RestoreService
-	Scheduler  *usecase.SchedulerService
+	Auth        *usecase.AuthService
+	Containers  *usecase.ContainerService
+	Storages    *usecase.StorageService
+	Backups     *usecase.BackupService
+	Restores    *usecase.RestoreService
+	Scheduler   *usecase.SchedulerService
+	Replication *usecase.ReplicationService
 }
 
 type Server struct {
@@ -97,6 +98,7 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 		authed.GET("/storage", s.handleListStorage)
 		authed.GET("/storage/:id", s.handleGetStorage)
 		authed.GET("/storage/:id/snapshots", s.handleListSnapshots)
+		authed.GET("/replication", s.handleReplicationStatus)
 
 		authed.POST("/backups", s.handleStartBackup)
 		authed.DELETE("/backups/:id", s.handleCancelBackup)
@@ -133,6 +135,9 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 			admin.PUT("/storage/:id", s.handleUpdateStorage)
 			admin.DELETE("/storage/:id", s.handleDeleteStorage)
 			admin.POST("/storage/:id/check", s.handleCheckStorage)
+			// une copie complète consomme la bande passante des deux dépôts :
+			// déclenchement réservé aux admins
+			admin.POST("/storage/:id/replicate", s.handleReplicate)
 
 			admin.GET("/users", s.handleListUsers)
 			admin.POST("/users", s.handleCreateUser)

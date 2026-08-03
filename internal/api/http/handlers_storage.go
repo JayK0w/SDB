@@ -104,6 +104,63 @@ func (s *Server) handleListSnapshots(c *gin.Context) {
 	c.JSON(http.StatusOK, out)
 }
 
+// handleReplicationStatus : écart entre chaque dépôt et sa copie secondaire.
+// La mesure INTERROGE les deux dépôts (deux `restic snapshots` par paire) :
+// c'est une action à la demande, pas une donnée à rafraîchir en boucle.
+func (s *Server) handleReplicationStatus(c *gin.Context) {
+	statuses, err := s.svc.Replication.StatusAll(c.Request.Context())
+	out := make([]replicationDTO, 0, len(statuses))
+	for _, st := range statuses {
+		out = append(out, toReplicationDTO(st))
+	}
+	if err != nil {
+		// une paire injoignable ne doit pas effacer l'état des autres : on rend
+		// ce qui a pu être mesuré, avec la raison de ce qui manque
+		s.logger.Error("replication status incomplete", "error", err)
+		c.JSON(http.StatusOK, gin.H{"replication": out, "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"replication": out})
+}
+
+// handleReplicate : une copie complète peut durer des heures → job détaché,
+// 202. L'avancement passe par le flux d'événements, le résultat par les logs
+// et par GET /replication.
+func (s *Server) handleReplicate(c *gin.Context) {
+	id, err := pathID(c)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	// la paire est validée AVANT d'accepter le job : un 202 sur un dépôt qui
+	// n'est pas une copie secondaire serait un faux acquittement
+	if _, err := s.svc.Replication.Status(c.Request.Context(), id); err != nil {
+		s.respondError(c, err)
+		return
+	}
+	go func() {
+		copyCtx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
+		defer cancel()
+		st, err := s.svc.Replication.Replicate(copyCtx, id)
+		if err != nil {
+			s.logger.Error("on-demand replication failed", "storage_id", id, "error", err)
+			s.hub.Publish(domain.ProgressEvent{
+				Type:    domain.EventError,
+				Time:    time.Now().UTC(),
+				Message: fmt.Sprintf("replication of storage %d failed: %v", id, err),
+			})
+			return
+		}
+		s.hub.Publish(domain.ProgressEvent{
+			Type: domain.EventLog,
+			Time: time.Now().UTC(),
+			Message: fmt.Sprintf("replication of %s finished: %d snapshot(s) copied, %d pending",
+				st.CopyName, st.CopiedSnapshots, st.Pending),
+		})
+	}()
+	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
+}
+
 // handleCheckStorage : restic check peut durer des minutes → exécution en
 // arrière-plan, résultat via le flux d'événements et les logs (202).
 func (s *Server) handleCheckStorage(c *gin.Context) {

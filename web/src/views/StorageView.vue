@@ -3,7 +3,7 @@ import { onMounted, ref } from 'vue'
 
 import { api } from '@/lib/api'
 import { formatDate, shortID } from '@/lib/format'
-import type { Snapshot, Storage } from '@/types'
+import type { Replication, Snapshot, Storage } from '@/types'
 import { useAuthStore } from '@/stores/auth'
 import { useToastsStore } from '@/stores/toasts'
 import StorageModal from '@/components/StorageModal.vue'
@@ -19,8 +19,53 @@ const expanded = ref<number | null>(null)
 const snapshots = ref<Snapshot[]>([])
 const snapshotsLoading = ref(false)
 
+// etat de la copie secondaire : mesure a la demande (deux `restic snapshots`
+// par paire), jamais rafraichi en boucle
+const replication = ref<Replication[]>([])
+const replicationLoading = ref(false)
+const replicationChecked = ref(false)
+
 function errMsg(e: unknown): string {
   return e instanceof Error ? e.message : String(e)
+}
+
+function storageName(id: number): string {
+  return storages.value.find((s) => s.id === id)?.name ?? `#${id}`
+}
+
+function statusOf(id: number): Replication | undefined {
+  return replication.value.find((r) => r.copy_id === id)
+}
+
+// retard exprime en clair : « 3 j » parle a l'exploitant, 259200 non
+function humanLag(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)} s`
+  if (seconds < 3600) return `${Math.round(seconds / 60)} min`
+  if (seconds < 86400) return `${Math.round(seconds / 3600)} h`
+  return `${Math.round(seconds / 86400)} j`
+}
+
+async function loadReplication(): Promise<void> {
+  replicationLoading.value = true
+  try {
+    const res = await api.storage.replication()
+    replication.value = res.replication ?? []
+    replicationChecked.value = true
+    if (res.error) toasts.error(res.error)
+  } catch (e) {
+    toasts.error(errMsg(e))
+  } finally {
+    replicationLoading.value = false
+  }
+}
+
+async function replicate(storage: Storage): Promise<void> {
+  try {
+    await api.storage.replicate(storage.id)
+    toasts.success(`Réplication vers « ${storage.name} » lancée`)
+  } catch (e) {
+    toasts.error(errMsg(e))
+  }
 }
 
 async function load(): Promise<void> {
@@ -82,8 +127,24 @@ async function remove(storage: Storage): Promise<void> {
         <h1 class="text-xl font-semibold text-zinc-100">Stockage</h1>
         <p class="mt-1 text-sm text-zinc-500">Dépôts restic chiffrés (AES-256) accueillant vos snapshots.</p>
       </div>
-      <button v-if="auth.isAdmin" class="btn btn-primary" @click="showCreate = true">Nouveau stockage</button>
+      <div class="flex gap-2">
+        <button class="btn btn-ghost" :disabled="replicationLoading" @click="loadReplication">
+          {{ replicationLoading ? 'Mesure…' : 'État des copies' }}
+        </button>
+        <button v-if="auth.isAdmin" class="btn btn-primary" @click="showCreate = true">Nouveau stockage</button>
+      </div>
     </header>
+
+    <!-- Sans seconde copie, chaque sauvegarde ne tient qu'a un seul support :
+         le dire explicitement plutot que de laisser l'absence passer pour un
+         etat normal. -->
+    <p
+      v-if="!loading && !error && storages.length > 0 && storages.every((s) => !s.copy_of_storage_id)"
+      class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+    >
+      Aucune copie secondaire : toutes vos sauvegardes vivent sur un support unique. La règle 3-2-1
+      demande un second dépôt — créez-en un et désignez son dépôt source.
+    </p>
 
     <p v-if="loading" class="text-sm text-zinc-500">Chargement…</p>
     <p v-else-if="error" class="text-sm text-red-400">{{ error }}</p>
@@ -105,10 +166,36 @@ async function remove(storage: Storage): Promise<void> {
               >
                 append-only
               </span>
+              <span
+                v-if="s.copy_of_storage_id"
+                :title="`Copie secondaire de « ${storageName(s.copy_of_storage_id)} » : alimentée par réplication, jamais sauvegardée directement.`"
+                class="ml-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-2 py-0.5 text-xs text-sky-300"
+              >
+                copie de {{ storageName(s.copy_of_storage_id) }}
+              </span>
             </p>
             <p class="mt-1 truncate font-mono text-xs text-zinc-500">{{ s.endpoint }}</p>
             <p v-if="s.credential_keys.length" class="mt-1 text-xs text-zinc-600">
               Identifiants : {{ s.credential_keys.join(', ') }}
+            </p>
+            <p
+              v-if="s.copy_of_storage_id && statusOf(s.id)"
+              class="mt-1 text-xs"
+              :class="statusOf(s.id)!.pending > 0 ? 'text-amber-300' : 'text-emerald-300'"
+            >
+              <template v-if="statusOf(s.id)!.pending > 0">
+                {{ statusOf(s.id)!.pending }} snapshot(s) non copié(s), le plus ancien remonte à
+                {{ humanLag(statusOf(s.id)!.lag_seconds) }}
+              </template>
+              <template v-else>
+                À jour — {{ statusOf(s.id)!.copied_snapshots }} snapshot(s) répliqué(s)
+              </template>
+            </p>
+            <p
+              v-else-if="s.copy_of_storage_id && replicationChecked"
+              class="mt-1 text-xs text-zinc-600"
+            >
+              État de la copie indisponible.
             </p>
           </div>
           <div class="flex gap-2">
@@ -117,6 +204,9 @@ async function remove(storage: Storage): Promise<void> {
             </button>
             <template v-if="auth.isAdmin">
               <button class="btn btn-ghost" @click="runCheck(s)">Vérifier</button>
+              <button v-if="s.copy_of_storage_id" class="btn btn-ghost" @click="replicate(s)">
+                Répliquer
+              </button>
               <button class="btn btn-danger" @click="remove(s)">Supprimer</button>
             </template>
           </div>
@@ -147,6 +237,6 @@ async function remove(storage: Storage): Promise<void> {
       </div>
     </div>
 
-    <StorageModal v-if="showCreate" @close="showCreate = false" @created="load" />
+    <StorageModal v-if="showCreate" :sources="storages" @close="showCreate = false" @created="load" />
   </div>
 </template>

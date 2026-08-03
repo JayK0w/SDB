@@ -48,7 +48,10 @@ const retention = ref({
 
 onMounted(async () => {
   try {
-    ;[containers.value, storages.value] = await Promise.all([api.containers.list(true), api.storage.list()])
+    const [allContainers, allStorages] = await Promise.all([api.containers.list(true), api.storage.list()])
+    containers.value = allContainers
+    // copies secondaires exclues : une planification ne peut pas y sauvegarder
+    storages.value = allStorages.filter((s) => !s.copy_of_storage_id)
     if (!containerName.value && containers.value.length > 0) containerName.value = containers.value[0]!.name
     if (!storageId.value && storages.value.length > 0) storageId.value = storages.value[0]!.id
   } catch (e) {

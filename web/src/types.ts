@@ -50,8 +50,29 @@ export interface Storage {
   credential_keys: string[]
   /** depot protege : SDB refuse forget/prune et sa suppression */
   append_only: boolean
+  /** 0 = depot principal ; sinon ce depot est la copie secondaire de celui-ci */
+  copy_of_storage_id: number
   created_at: string
   updated_at: string
+}
+
+/**
+ * Ecart entre un depot et sa copie secondaire (regle 3-2-1), MESURE dans les
+ * deux depots au moment de la requete — jamais un etat memorise.
+ */
+export interface Replication {
+  copy_id: number
+  copy_name: string
+  source_id: number
+  source_name: string
+  source_snapshots: number
+  copied_snapshots: number
+  /** snapshots presents dans le depot principal et absents de la copie */
+  pending: number
+  oldest_pending?: string
+  /** anciennete du PLUS ANCIEN snapshot non copie, 0 si tout est copie */
+  lag_seconds: number
+  checked_at: string
 }
 
 export interface Snapshot {
@@ -176,6 +197,8 @@ export interface StoragePayload {
   append_only?: boolean
   /** optionnel : vide = SDB en genere un. Le fournir permet de le sequestrer. */
   restic_password?: string
+  /** declare ce depot comme copie secondaire d'un autre ; fixe a la creation */
+  copy_of_storage_id?: number
 }
 
 /**

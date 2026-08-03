@@ -115,21 +115,36 @@ func (f *fakeRuntime) started() []string {
 // ---------------------------------------------------------------------------
 
 type fakeEngine struct {
-	mu          sync.Mutex
-	ensureErr   error
-	backupErr   error
-	restoreErr  error
-	checkErr    error
-	summary     *domain.BackupSummary
-	backupFn    func(ctx context.Context) error // blocage optionnel (tests de concurrence)
-	restoreFn   func(ctx context.Context) error
-	ensureCalls int
-	backupCalls int
-	checkCalls  int
+	mu           sync.Mutex
+	ensureErr    error
+	backupErr    error
+	restoreErr   error
+	checkErr     error
+	summary      *domain.BackupSummary
+	backupFn     func(ctx context.Context) error // blocage optionnel (tests de concurrence)
+	restoreFn    func(ctx context.Context) error
+	ensureCalls  int
+	backupCalls  int
+	checkCalls   int
 	forgets      []domain.RetentionPolicy
 	restores     []string
 	snapshots    []domain.Snapshot
 	snapshotsErr error
+
+	// copie secondaire : snapshots par depot, pour que les tests observent ce
+	// qui a REELLEMENT ete copie et pas seulement l'appel
+	copyErr       error
+	ensureCopyErr error
+	copyCalls     []copyCall
+	ensureCopies  int
+	snapshotsByID map[int64][]domain.Snapshot
+	copyFn        func(ctx context.Context) error
+}
+
+// copyCall : une invocation de Copy, telle que les tests la relisent.
+type copyCall struct {
+	dst, src  int64
+	snapshots []string
 }
 
 func (f *fakeEngine) EnsureRepository(context.Context, *domain.StorageConfig) error {
@@ -175,10 +190,73 @@ func (f *fakeEngine) Restore(ctx context.Context, _ *domain.StorageConfig, spec 
 	return f.restoreErr
 }
 
-func (f *fakeEngine) Snapshots(context.Context, *domain.StorageConfig, []string) ([]domain.Snapshot, error) {
+func (f *fakeEngine) Snapshots(_ context.Context, storage *domain.StorageConfig, _ []string) ([]domain.Snapshot, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.snapshotsByID != nil {
+		return append([]domain.Snapshot(nil), f.snapshotsByID[storage.ID]...), f.snapshotsErr
+	}
 	return append([]domain.Snapshot(nil), f.snapshots...), f.snapshotsErr
+}
+
+func (f *fakeEngine) EnsureCopyTarget(_ context.Context, _, _ *domain.StorageConfig) error {
+	f.mu.Lock()
+	f.ensureCopies++
+	f.mu.Unlock()
+	return f.ensureCopyErr
+}
+
+func (f *fakeEngine) Copy(ctx context.Context, dst, src *domain.StorageConfig,
+	ids []string, _ chan<- domain.ProgressEvent) error {
+	f.mu.Lock()
+	f.copyCalls = append(f.copyCalls, copyCall{dst: dst.ID, src: src.ID, snapshots: append([]string(nil), ids...)})
+	fn := f.copyFn
+	f.mu.Unlock()
+	if fn != nil {
+		if err := fn(ctx); err != nil {
+			return err
+		}
+	}
+	if f.copyErr != nil {
+		return f.copyErr
+	}
+	// la copie reussie ajoute les snapshots au depot cible : c'est ce que les
+	// tests de reconciliation doivent pouvoir observer
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.snapshotsByID == nil {
+		return nil
+	}
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	// restic saute les snapshots deja copies : le fake aussi, sinon les tests
+	// de reconciliation verraient des doublons la ou la realite est idempotente
+	present := map[string]bool{}
+	for _, snap := range f.snapshotsByID[dst.ID] {
+		present[snapshotKey(snap)] = true
+	}
+	for _, snap := range f.snapshotsByID[src.ID] {
+		if len(ids) > 0 && !wanted[snap.ID] {
+			continue
+		}
+		if present[snapshotKey(snap)] {
+			continue
+		}
+		clone := snap
+		// la re-encryption change l'identifiant, jamais la date ni les chemins
+		clone.ID = "copy-" + snap.ID
+		clone.ShortID = "copy-" + snap.ShortID
+		f.snapshotsByID[dst.ID] = append(f.snapshotsByID[dst.ID], clone)
+	}
+	return nil
+}
+
+func (f *fakeEngine) copies() []copyCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]copyCall(nil), f.copyCalls...)
 }
 
 func (f *fakeEngine) Forget(_ context.Context, _ *domain.StorageConfig, p domain.RetentionPolicy) error {

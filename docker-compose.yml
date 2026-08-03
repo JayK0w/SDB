@@ -45,6 +45,10 @@ services:
       # sauvegarde est restaurable — le reste prouve qu'elle existe.
       # Coûteux en I/O : décaler si la fenêtre chevauche la production.
       SDB_VERIFY_INTERVAL: ${SDB_VERIFY_INTERVAL:-168h}
+      # réconciliation des COPIES SECONDAIRES (3-2-1) : rattrape les snapshots
+      # que la copie immédiate n'a pas pu écrire (destination injoignable, SDB
+      # arrêté). Sans dépôt secondaire configuré, la passe ne fait rien.
+      SDB_REPLICATION_INTERVAL: ${SDB_REPLICATION_INTERVAL:-6h}
       # alerte sortante sur run terminé en échec ou avertissement. Vide =
       # aucune alerte, les échecs ne sont visibles que dans /metrics et les
       # logs. Peut contenir un jeton : la renseigner dans le .env, jamais ici.

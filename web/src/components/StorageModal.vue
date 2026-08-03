@@ -2,11 +2,17 @@
 import { computed, ref } from 'vue'
 
 import { api } from '@/lib/api'
-import type { StorageType } from '@/types'
+import type { Storage, StorageType } from '@/types'
 import { useToastsStore } from '@/stores/toasts'
 import Modal from './Modal.vue'
 
 const emit = defineEmits<{ close: []; created: [] }>()
+
+// depots principaux existants : seuls candidats comme source d'une copie
+// secondaire (les chaines de copies sont refusees par l'API)
+const props = defineProps<{ sources?: Storage[] }>()
+
+const copyCandidates = computed(() => (props.sources ?? []).filter((s) => !s.copy_of_storage_id))
 
 const toasts = useToastsStore()
 
@@ -86,6 +92,9 @@ const name = ref('')
 const type = ref<StorageType>('local')
 const endpoint = ref('')
 const appendOnly = ref(false)
+// 0 = depot principal. Fixe a la creation : c'est a l'init que le depot herite
+// des parametres de decoupage de sa source, jamais apres.
+const copyOf = ref(0)
 // mot de passe restitue une seule fois par l'API : tant qu'il est affiche,
 // la modale reste ouverte, sinon il est perdu pour toujours
 const createdPassword = ref('')
@@ -135,6 +144,7 @@ async function submit(): Promise<void> {
       endpoint: endpoint.value,
       credentials: creds,
       append_only: appendOnly.value,
+      copy_of_storage_id: Number(copyOf.value) || 0,
     })
     toasts.success(`Stockage « ${created.name} » créé, dépôt restic initialisé`)
     emit('created')
@@ -230,6 +240,21 @@ async function submit(): Promise<void> {
           />
           <button type="button" class="btn btn-ghost px-2" aria-label="Retirer" @click="removeCredential(i)">✕</button>
         </div>
+      </div>
+
+      <div v-if="copyCandidates.length">
+        <label class="label" for="storage-copy-of">Rôle</label>
+        <select id="storage-copy-of" v-model="copyOf" class="input">
+          <option :value="0">Dépôt principal (reçoit les sauvegardes)</option>
+          <option v-for="src in copyCandidates" :key="src.id" :value="src.id">
+            Copie secondaire de « {{ src.name }} »
+          </option>
+        </select>
+        <p class="mt-1 text-xs text-zinc-500">
+          Une copie secondaire n'est jamais sauvegardée directement : elle reçoit les snapshots de sa
+          source après chaque sauvegarde, puis à chaque passe de réconciliation. Elle est initialisée
+          depuis sa source — ce rattachement ne peut plus changer ensuite.
+        </p>
       </div>
 
       <label class="flex items-start gap-3 rounded-lg border border-zinc-800 px-3 py-2 text-sm text-zinc-300">

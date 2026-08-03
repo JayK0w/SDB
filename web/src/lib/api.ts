@@ -4,6 +4,7 @@ import type {
   Container,
   Health,
   LoginResponse,
+  Replication,
   RestorePayload,
   RestoreRecord,
   Schedule,
@@ -98,6 +99,11 @@ export const api = {
     update: (id: number, payload: StoragePayload) => request<Storage>('PUT', `/storage/${id}`, payload),
     remove: (id: number) => request<void>('DELETE', `/storage/${id}`),
     check: (id: number) => request<{ status: string }>('POST', `/storage/${id}/check`),
+    // interroge les deux depots de chaque paire : action a la demande, pas un
+    // rafraichissement de fond
+    replication: () =>
+      request<{ replication: Replication[]; error?: string }>('GET', '/replication'),
+    replicate: (id: number) => request<{ status: string }>('POST', `/storage/${id}/replicate`),
     snapshots: (id: number, tags: string[] = []) => {
       const search = new URLSearchParams()
       for (const t of tags) search.append('tag', t)

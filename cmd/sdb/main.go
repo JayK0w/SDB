@@ -151,8 +151,16 @@ func run() error {
 		logger.Warn("no alert webhook configured; backup failures are only visible in /metrics and logs")
 	}
 
+	// copie secondaire (3-2-1) : le dépôt principal est un support unique tant
+	// qu'aucun autre ne porte les mêmes snapshots
+	replicationSvc := usecase.NewReplicationService(engine, storageRepo, publisher, logger,
+		usecase.WithReplicationObserver(func(st usecase.ReplicationStatus) {
+			collector.RecordReplication(st.CopyName, st.SourceName, st.Pending, st.Lag().Seconds())
+		}))
+
 	backupSvc := usecase.NewBackupService(runtime, engine, storageRepo, history, publisher, logger,
-		usecase.WithStrictPartial(cfg.Maintenance.StrictPartial))
+		usecase.WithStrictPartial(cfg.Maintenance.StrictPartial),
+		usecase.WithReplicator(replicationSvc))
 	restoreSvc := usecase.NewRestoreService(runtime, engine, storageRepo, restoreHistory, publisher, logger)
 
 	// preuve de restaurabilite : extrait reellement le dernier snapshot dans
@@ -164,6 +172,22 @@ func run() error {
 	} else {
 		logger.Warn("restore verification disabled; nothing proves the backups are restorable (set SDB_VERIFY_INTERVAL)")
 	}
+	// une copie n'est prouvée que mesurée : la passe compare les snapshots des
+	// deux dépôts et alimente sdb_replication_pending_snapshots
+	if cfg.Maintenance.ReplicationInterval > 0 {
+		go replicationSvc.Schedule(ctx, cfg.Maintenance.ReplicationInterval)
+	}
+	switch pairs, err := replicationSvc.Configured(ctx); {
+	case err != nil:
+		logger.Error("could not determine secondary copy configuration", "error", err)
+	case pairs == 0:
+		logger.Warn("no secondary copy configured; every backup lives on a single medium " +
+			"(create a storage with copy_of_storage_id to satisfy the 3-2-1 rule)")
+	default:
+		logger.Info("secondary copies configured", "pairs", pairs,
+			"reconciliation", cfg.Maintenance.ReplicationInterval.String())
+	}
+
 	schedulerSvc := usecase.NewSchedulerService(sqlite.NewScheduleRepo(db), backupSvc, logger,
 		usecase.WithCatchUp(cfg.Maintenance.ScheduleCatchUp),
 		usecase.WithMissedRunHandler(func(sched domain.BackupSchedule, missed int) {
@@ -193,12 +217,13 @@ func run() error {
 		Metrics:      collector.Handler(),
 		MetricsToken: cfg.Auth.MetricsToken,
 	}, httpapi.Services{
-		Auth:       authSvc,
-		Containers: usecase.NewContainerService(runtime),
-		Storages:   usecase.NewStorageService(storageRepo, engine, logger),
-		Backups:    backupSvc,
-		Restores:   restoreSvc,
-		Scheduler:  schedulerSvc,
+		Auth:        authSvc,
+		Containers:  usecase.NewContainerService(runtime),
+		Storages:    usecase.NewStorageService(storageRepo, engine, logger),
+		Backups:     backupSvc,
+		Restores:    restoreSvc,
+		Scheduler:   schedulerSvc,
+		Replication: replicationSvc,
 	}, hub, logger)
 
 	logger.Info("HTTP API listening", "addr", cfg.Server.Addr())

@@ -77,6 +77,7 @@ one move. The following controls exist to break that:
 | **HTTP hardening** — strict CSP, `nosniff`, `DENY` framing, 1 MiB body cap, per-user rate limit on writes. HSTS only under TLS. | enforced | — |
 | **Verification restores** — the latest snapshot of every repository is *actually extracted* into a disposable `sdb-verify-*` volume with `restic restore --verify`, then the volume is destroyed. | off | `SDB_VERIFY_INTERVAL` |
 | **Missed-window detection** — schedules whose slot elapsed while SDB was down are logged and counted in `sdb_schedule_missed_runs_total`. Catch-up replays at most one run per schedule. | detection on, catch-up off | `SDB_SCHEDULE_CATCHUP` |
+| **Secondary copies (3-2-1)** — a storage declared as the copy of another receives every snapshot through `restic copy`, right after each successful backup and again on a reconciliation pass. Replication lag is *measured in both repositories*, never remembered. | off until a copy exists, reconciliation every 6h | `SDB_REPLICATION_INTERVAL` |
 
 **The append-only flag is an application-level ratchet, not immutability.**
 It removes SDB as a deletion vector; it cannot stop someone who reaches the
@@ -99,6 +100,55 @@ failure travels through the same alert path as any other failed job. Volume
 deletion is guarded twice — the usecase only ever targets `sdb-verify-*`
 names, and the Docker adapter refuses anything else, so a regression cannot
 turn cleanup into data loss.
+
+### The second copy (3-2-1)
+
+Append-only protects a repository from *deletion*, not from the loss or
+corruption of the medium holding it. One repository is one medium: losing it
+loses everything. A storage created with `copy_of_storage_id` is the
+**secondary copy** of another and receives its snapshots through
+`restic copy`.
+
+The link is carried by the copy, not by the source. That is what allows the
+copy to be initialised with `restic init --copy-chunker-params` *from* its
+source — chunker parameters can only be inherited at creation, and without
+them copied data can occupy twice the space. It also makes several copies of
+one repository a non-decision.
+
+Two triggers, one mechanism:
+
+- **after every successful backup**, before retention — pruning the primary
+  first could delete a snapshot that still exists in only one place;
+- **a reconciliation pass** (`SDB_REPLICATION_INTERVAL`) that copies whatever
+  is missing, which is what catches up an unreachable destination, a network
+  failure, or backups taken while SDB was down.
+
+A failed copy degrades the run to **warning**, not failure: the snapshot
+exists and is restorable from the primary, and announcing `failed` would
+suggest there is no backup at all — the more dangerous lie. The gap stays
+visible (the alert webhook fires on warnings) and stays counted in
+`sdb_replication_pending_snapshots` / `sdb_replication_lag_seconds` until it
+is closed.
+
+**State is read from the repositories, never stored.** `restic copy`
+re-encrypts, so a copied snapshot gets a *different* ID; replication is
+tracked by matching snapshot time and archived paths across both
+repositories. A "copied" column in SQLite could survive a database restore or
+a manual purge of the copy and quietly lie; the comparison cannot.
+
+Two constraints follow from restic itself, and both are enforced rather than
+discovered at 3am:
+
+- backend credentials (`AWS_*`, `B2_*`, …) have no `--from` variant and are
+  **shared** between a repository and its copy source. Pairing two S3 accounts
+  with different keys is refused at configuration time, naming the conflicting
+  variable, instead of authenticating the copy against the wrong account;
+- a copy target refuses direct backups. Mixing native and replicated snapshots
+  in one repository would make the replication gap — and the alert built on it
+  — meaningless.
+
+`GET /replication` measures the gap on demand (two `restic snapshots` per
+pair); `POST /storage/:id/replicate` forces a full pass.
 
 ### Who backs up SDB itself
 
@@ -132,10 +182,12 @@ would stay green — the breakage would surface in production, at restore time.
 
 `make test-integration` (a dedicated CI job, `-tags=integration`) runs the
 real image against a real repository: init, backup, snapshot listing, clone
-restore, `--verify`, `--read-data-subset` check, retention with prune, and
-the unknown-snapshot failure path. It asserts on the *restored bytes*, not
-on the command line — a mutation reintroducing the original clone bug fails
-it with `restored content = ""`.
+restore, `--verify`, `--read-data-subset` check, retention with prune, the
+unknown-snapshot failure path, and the secondary copy — a snapshot copied to
+a repository with a *different* password is restored **from that copy alone**
+and compared byte for byte. It asserts on the *restored bytes*, not on the
+command line — a mutation reintroducing the original clone bug fails it with
+`restored content = ""`.
 
 ### Missed schedules
 
@@ -176,6 +228,8 @@ over the WebSocket.
 | POST/PUT/DELETE | `/storage[/:id]` | admin | Manage storage targets |
 | GET | `/storage/:id/snapshots` | user | List Restic snapshots (`?tag=`) |
 | POST | `/storage/:id/check` | admin | Integrity check → 202 |
+| GET | `/replication` | user | Replication gap of every secondary copy (measured in both repositories) |
+| POST | `/storage/:id/replicate` | admin | Copy everything missing to that secondary copy → 202 |
 | POST | `/backups` | user | Start a backup → 202 + record |
 | DELETE | `/backups/:id` | user | Cancel a running backup |
 | GET | `/backups/history[/:id]` | user | Backup history (filterable) |
@@ -255,3 +309,6 @@ logs on first start.
 - [x] Phase 6 — hardened packaging: multi-stage image, compose file, CI
 - [x] v0.2 — scheduled backups (cron), restore history, TypeScript
       frontend, Prometheus `/metrics`, cloud backends (B2/Azure/GCS/SFTP)
+- [x] Secondary copies (3-2-1) — `restic copy` to a second repository,
+      inline after each backup plus a reconciliation pass, replication lag
+      measured in both repositories

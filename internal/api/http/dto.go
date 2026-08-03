@@ -60,14 +60,17 @@ func toContainerDTO(c domain.Container) containerDTO {
 // storageDTO : jamais de valeurs secretes — seuls les noms de cles,
 // pour que l UI montre ce qui est configure.
 type storageDTO struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	Type           string    `json:"type"`
-	Endpoint       string    `json:"endpoint"`
-	CredentialKeys []string  `json:"credential_keys"`
-	AppendOnly     bool      `json:"append_only"`
-	CreatedAt      time.Time `json:"created_at"`
-	UpdatedAt      time.Time `json:"updated_at"`
+	ID             int64    `json:"id"`
+	Name           string   `json:"name"`
+	Type           string   `json:"type"`
+	Endpoint       string   `json:"endpoint"`
+	CredentialKeys []string `json:"credential_keys"`
+	AppendOnly     bool     `json:"append_only"`
+	// CopyOfStorageID : 0 = depot principal ; sinon ce depot est la copie
+	// secondaire du depot indique (3-2-1).
+	CopyOfStorageID int64     `json:"copy_of_storage_id"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }
 
 func toStorageDTO(cfg domain.StorageConfig) storageDTO {
@@ -79,8 +82,34 @@ func toStorageDTO(cfg domain.StorageConfig) storageDTO {
 	sort.Strings(keys)
 	return storageDTO{
 		ID: red.ID, Name: red.Name, Type: string(red.Type), Endpoint: red.Endpoint,
-		CredentialKeys: keys, AppendOnly: red.AppendOnly,
+		CredentialKeys: keys, AppendOnly: red.AppendOnly, CopyOfStorageID: red.CopyOf,
 		CreatedAt: red.CreatedAt, UpdatedAt: red.UpdatedAt,
+	}
+}
+
+// replicationDTO : ecart entre un depot et sa copie secondaire, MESURE dans
+// les deux depots au moment de la requete — jamais un etat memorise, qui
+// pourrait survivre a une purge du depot de copie.
+type replicationDTO struct {
+	CopyID          int64      `json:"copy_id"`
+	CopyName        string     `json:"copy_name"`
+	SourceID        int64      `json:"source_id"`
+	SourceName      string     `json:"source_name"`
+	SourceSnapshots int        `json:"source_snapshots"`
+	CopiedSnapshots int        `json:"copied_snapshots"`
+	Pending         int        `json:"pending"`
+	OldestPending   *time.Time `json:"oldest_pending,omitempty"`
+	LagSeconds      int64      `json:"lag_seconds"`
+	CheckedAt       time.Time  `json:"checked_at"`
+}
+
+func toReplicationDTO(st usecase.ReplicationStatus) replicationDTO {
+	return replicationDTO{
+		CopyID: st.CopyID, CopyName: st.CopyName,
+		SourceID: st.SourceID, SourceName: st.SourceName,
+		SourceSnapshots: st.SourceSnapshots, CopiedSnapshots: st.CopiedSnapshots,
+		Pending: st.Pending, OldestPending: st.OldestPending,
+		LagSeconds: int64(st.Lag().Seconds()), CheckedAt: st.CheckedAt,
 	}
 }
 
@@ -246,6 +275,9 @@ type storageRequest struct {
 	// permet de le sequestrer hors de SDB, seule facon de survivre a la
 	// perte de sdb.db. Immuable apres creation.
 	ResticPassword string `json:"restic_password,omitempty"`
+	// CopyOfStorageID : declare ce depot comme copie secondaire du depot
+	// indique. Fixe a la creation (0 en mise a jour = inchange).
+	CopyOfStorageID int64 `json:"copy_of_storage_id"`
 }
 
 func (r storageRequest) toDomain(id int64) *domain.StorageConfig {
@@ -256,6 +288,7 @@ func (r storageRequest) toDomain(id int64) *domain.StorageConfig {
 		Endpoint:    r.Endpoint,
 		Credentials: r.Credentials,
 		AppendOnly:  r.AppendOnly,
+		CopyOf:      r.CopyOfStorageID,
 		// Vide a la creation = genere par StorageService.Create. En mise a
 		// jour, toute valeur differente de l existante est refusee : le mot
 		// de passe d un depot est immuable (cf. StorageService.Update).

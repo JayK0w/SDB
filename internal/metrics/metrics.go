@@ -22,6 +22,9 @@ type Collector struct {
 	runningJobs   prometheus.Gauge
 	lastSuccess   *prometheus.GaugeVec
 	missedRuns    *prometheus.CounterVec
+
+	replicationPending *prometheus.GaugeVec
+	replicationLag     *prometheus.GaugeVec
 }
 
 var _ domain.EventPublisher = (*Collector)(nil)
@@ -57,6 +60,17 @@ func New(version string) *Collector {
 			Name: "sdb_schedule_missed_runs_total",
 			Help: "Scheduled windows that elapsed while SDB was down, per schedule (alert on any increase).",
 		}, []string{"schedule", "container"}),
+		// alerte type : la seconde copie a decroche. Une sauvegarde qui
+		// n'existe qu'a un exemplaire ne survit pas a la perte de son support,
+		// et rien d'autre ne le signale.
+		replicationPending: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "sdb_replication_pending_snapshots",
+			Help: "Snapshots present in the primary repository and missing from its secondary copy (alert on any non-zero value that persists).",
+		}, []string{"copy", "source"}),
+		replicationLag: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "sdb_replication_lag_seconds",
+			Help: "Age of the OLDEST snapshot not yet replicated to the secondary copy, 0 when fully replicated.",
+		}, []string{"copy", "source"}),
 	}
 
 	info := prometheus.NewGauge(prometheus.GaugeOpts{
@@ -67,7 +81,8 @@ func New(version string) *Collector {
 	info.Set(1)
 
 	registry.MustRegister(
-		c.backupsTotal, c.restoresTotal, c.bytesTotal, c.runningJobs, c.lastSuccess, c.missedRuns, info,
+		c.backupsTotal, c.restoresTotal, c.bytesTotal, c.runningJobs, c.lastSuccess, c.missedRuns,
+		c.replicationPending, c.replicationLag, info,
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
@@ -111,6 +126,13 @@ func (c *Collector) Publish(ev domain.ProgressEvent) {
 
 func (c *Collector) Handler() http.Handler {
 	return promhttp.HandlerFor(c.registry, promhttp.HandlerOpts{})
+}
+
+// RecordReplication : etat d'une paire depot -> copie secondaire, tel que
+// mesure dans les deux depots.
+func (c *Collector) RecordReplication(copyName, sourceName string, pending int, lagSeconds float64) {
+	c.replicationPending.WithLabelValues(copyName, sourceName).Set(float64(pending))
+	c.replicationLag.WithLabelValues(copyName, sourceName).Set(lagSeconds)
 }
 
 // RecordMissedRuns : echeances tombees pendant un arret de SDB.

@@ -155,6 +155,59 @@ func TestStorageRepoDeleteReferencedIsConflict(t *testing.T) {
 	}
 }
 
+// Le rattachement d'une copie secondaire doit survivre au round-trip, et la
+// source ne doit pas pouvoir disparaître sous elle : une copie orpheline
+// laisserait croire à une réplication qui n'a plus lieu.
+func TestStorageRepoCopyOfRoundTripsAndProtectsItsSource(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	storages := sqlite.NewStorageRepo(db, testCipher(t))
+
+	primary := &domain.StorageConfig{Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary", ResticPassword: "pw1"}
+	if err := storages.Create(ctx, primary); err != nil {
+		t.Fatalf("Create(primary) error: %v", err)
+	}
+	copyCfg := &domain.StorageConfig{
+		Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", ResticPassword: "pw2",
+		CopyOf: primary.ID,
+	}
+	if err := storages.Create(ctx, copyCfg); err != nil {
+		t.Fatalf("Create(copy) error: %v", err)
+	}
+
+	got, err := storages.GetByID(ctx, copyCfg.ID)
+	if err != nil || got.CopyOf != primary.ID {
+		t.Fatalf("GetByID() = %+v, %v; want CopyOf = %d", got, err, primary.ID)
+	}
+	// un dépôt principal reste à zéro, pas à NULL scanné n'importe comment
+	if p, err := storages.GetByID(ctx, primary.ID); err != nil || p.CopyOf != 0 {
+		t.Fatalf("primary CopyOf = %d, want 0 (%v)", p.CopyOf, err)
+	}
+
+	if err := storages.Delete(ctx, primary.ID); !errors.Is(err, domain.ErrConflict) {
+		t.Fatalf("Delete(source of a copy): err = %v, want ErrConflict", err)
+	}
+	if err := storages.Delete(ctx, copyCfg.ID); err != nil {
+		t.Fatalf("Delete(copy) error: %v", err)
+	}
+	if err := storages.Delete(ctx, primary.ID); err != nil {
+		t.Fatalf("Delete(source) once the copy is gone: %v", err)
+	}
+}
+
+func TestStorageRepoRejectsCopyOfMissingStorage(t *testing.T) {
+	ctx := context.Background()
+	storages := sqlite.NewStorageRepo(openTestDB(t), testCipher(t))
+
+	cfg := &domain.StorageConfig{
+		Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", ResticPassword: "pw",
+		CopyOf: 404,
+	}
+	if err := storages.Create(ctx, cfg); !errors.Is(err, domain.ErrNotFound) {
+		t.Fatalf("Create(copy of a missing storage): err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestHistoryRepoListAndFailInterrupted(t *testing.T) {
 	ctx := context.Background()
 	db := openTestDB(t)

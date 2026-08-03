@@ -373,6 +373,154 @@ func TestIntegrationRestoreUnknownSnapshotFails(t *testing.T) {
 	}
 }
 
+// La copie secondaire ne vaut que si elle est restaurable SEULE. Ce test
+// sauvegarde dans un premier depot, copie vers un second, puis restaure
+// EXCLUSIVEMENT depuis le second et compare les octets : c'est la seule facon
+// de prouver que la regle 3-2-1 est reellement satisfaite, et pas seulement
+// qu'une commande `copy` est sortie avec le code 0.
+//
+// Les deux depots ont des mots de passe DIFFERENTS : restic re-encrypte a la
+// copie, et un test qui partagerait le mot de passe ne verrait pas une
+// regression sur --from-password-file.
+func TestIntegrationSecondaryCopyIsRestorableOnItsOwn(t *testing.T) {
+	rt := newRuntime(t)
+	cli := newDockerClient(t)
+	engine := New(rt, testResticImage)
+	ctx := context.Background()
+
+	primary := testStorageReal(t)
+	primary.Name = "primary"
+	secondary := testStorageReal(t)
+	secondary.ID, secondary.Name = 2, "offsite"
+	// suffixe explicite : l'horloge Windows n'a pas la resolution suffisante
+	// pour garantir deux chemins distincts en deux appels consecutifs
+	secondary.Endpoint = primary.Endpoint + "-copy"
+	secondary.ResticPassword = "integration-secondary-password"
+	secondary.CopyOf = primary.ID
+
+	srcVol := fmt.Sprintf("sdb-it-copysrc-%d", time.Now().UnixNano())
+	dstVol := fmt.Sprintf("sdb-it-copydst-%d", time.Now().UnixNano())
+	t.Cleanup(func() { removeVolume(t, cli, srcVol); removeVolume(t, cli, dstVol) })
+
+	const marker = "SECOND-COPY-PAYLOAD-321"
+	runInVolume(t, cli, srcVol, "echo '"+marker+"' > /v/marker.txt")
+
+	if err := engine.EnsureRepository(ctx, primary); err != nil {
+		t.Fatalf("EnsureRepository(primary) : %v", err)
+	}
+	events := make(chan domain.ProgressEvent, 256)
+	done := make(chan []domain.ProgressEvent, 1)
+	go drain(events, done)
+	summary, err := engine.Backup(ctx, primary, 1,
+		[]domain.Mount{{Type: domain.MountVolume, Name: srcVol}}, []string{"container:copy-it"}, events)
+	close(events)
+	<-done
+	if err != nil {
+		t.Fatalf("Backup() : %v", err)
+	}
+
+	// --- init du depot secondaire depuis sa source, puis copie ---
+	if err := engine.EnsureCopyTarget(ctx, secondary, primary); err != nil {
+		t.Fatalf("EnsureCopyTarget() : %v — --copy-chunker-params ou --from-repo ont-ils change ?", err)
+	}
+	cEvents := make(chan domain.ProgressEvent, 256)
+	cDone := make(chan []domain.ProgressEvent, 1)
+	go drain(cEvents, cDone)
+	err = engine.Copy(ctx, secondary, primary, []string{summary.SnapshotID}, cEvents)
+	close(cEvents)
+	<-cDone
+	if err != nil {
+		t.Fatalf("Copy() : %v", err)
+	}
+
+	copied, err := engine.Snapshots(ctx, secondary, nil)
+	if err != nil {
+		t.Fatalf("Snapshots(secondary) : %v", err)
+	}
+	if len(copied) != 1 {
+		t.Fatalf("%d snapshot(s) dans la copie, want 1", len(copied))
+	}
+	// la re-encryption DOIT changer l'identifiant : c'est ce qui interdit de
+	// suivre la replication par identifiant
+	if copied[0].ID == summary.SnapshotID {
+		t.Fatalf("le snapshot copie porte le meme id que l'original (%s) : hypothese de re-encryption fausse", copied[0].ID)
+	}
+
+	// --- restauration depuis la COPIE seule ---
+	rEvents := make(chan domain.ProgressEvent, 256)
+	rDone := make(chan []domain.ProgressEvent, 1)
+	go drain(rEvents, rDone)
+	err = engine.Restore(ctx, secondary, domain.RestoreSpec{
+		SnapshotID: copied[0].ID, SourceVolume: srcVol, TargetVolume: dstVol, Verify: true,
+	}, rEvents)
+	close(rEvents)
+	<-rDone
+	if err != nil {
+		t.Fatalf("Restore(depuis la copie) : %v", err)
+	}
+	if got := runInVolume(t, cli, dstVol, "cat /v/marker.txt"); got != marker {
+		t.Fatalf("contenu restaure depuis la copie = %q, want %q", got, marker)
+	}
+}
+
+// Une passe de reconciliation tourne toutes les quelques heures : si elle
+// recopiait a chaque fois ce qui est deja la, elle re-televerserait le depot
+// entier indefiniment.
+func TestIntegrationCopySkipsSnapshotsAlreadyReplicated(t *testing.T) {
+	rt := newRuntime(t)
+	cli := newDockerClient(t)
+	engine := New(rt, testResticImage)
+	ctx := context.Background()
+
+	primary := testStorageReal(t)
+	secondary := testStorageReal(t)
+	secondary.ID, secondary.Name = 2, "offsite"
+	secondary.Endpoint = primary.Endpoint + "-copy"
+	secondary.ResticPassword = "integration-secondary-password"
+
+	srcVol := fmt.Sprintf("sdb-it-idem-%d", time.Now().UnixNano())
+	t.Cleanup(func() { removeVolume(t, cli, srcVol) })
+	runInVolume(t, cli, srcVol, "echo idempotent > /v/f.txt")
+
+	if err := engine.EnsureRepository(ctx, primary); err != nil {
+		t.Fatalf("EnsureRepository() : %v", err)
+	}
+	events := make(chan domain.ProgressEvent, 128)
+	done := make(chan []domain.ProgressEvent, 1)
+	go drain(events, done)
+	if _, err := engine.Backup(ctx, primary, 1,
+		[]domain.Mount{{Type: domain.MountVolume, Name: srcVol}}, nil, events); err != nil {
+		close(events)
+		<-done
+		t.Fatalf("Backup() : %v", err)
+	}
+	close(events)
+	<-done
+
+	if err := engine.EnsureCopyTarget(ctx, secondary, primary); err != nil {
+		t.Fatalf("EnsureCopyTarget() : %v", err)
+	}
+	for i := 0; i < 2; i++ {
+		cEvents := make(chan domain.ProgressEvent, 128)
+		cDone := make(chan []domain.ProgressEvent, 1)
+		go drain(cEvents, cDone)
+		err := engine.Copy(ctx, secondary, primary, nil, cEvents)
+		close(cEvents)
+		<-cDone
+		if err != nil {
+			t.Fatalf("Copy() #%d : %v", i, err)
+		}
+	}
+
+	copied, err := engine.Snapshots(ctx, secondary, nil)
+	if err != nil {
+		t.Fatalf("Snapshots(secondary) : %v", err)
+	}
+	if len(copied) != 1 {
+		t.Fatalf("%d snapshots apres deux copies, want 1 — restic ne saute plus ceux deja copies", len(copied))
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

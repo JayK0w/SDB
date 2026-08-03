@@ -50,6 +50,14 @@ func (e *Engine) run(ctx context.Context, storage *domain.StorageConfig, cmd []s
 	if err != nil {
 		return -1, err
 	}
+	return e.runIn(ctx, repo, cmd, extraMounts, labels, stdout, stderr)
+}
+
+// runIn : même chose sur un contexte de dépôt déjà construit (une copie en
+// assemble deux).
+func (e *Engine) runIn(ctx context.Context, repo *repoContext, cmd []string,
+	extraMounts []domain.Mount, labels map[string]string, stdout, stderr io.Writer) (int, error) {
+
 	spec := domain.WorkerSpec{
 		Image:       e.image,
 		Cmd:         append(append([]string{}, cmd...), repo.opts...),
