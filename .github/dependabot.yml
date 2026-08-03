@@ -1,0 +1,40 @@
+# Mises a jour de dependances automatisees.
+#
+# govulncheck (scripts/vulncheck.sh) ne signale une CVE qu'une fois publiee et
+# atteignable ; Dependabot reduit la fenetre en proposant les montees de
+# version en amont. Les deux se completent : l'un detecte, l'autre previent.
+version: 2
+
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
+    groups:
+      # une PR par lot plutot qu'une par module : le SDK Docker et ses
+      # dependances transitives doivent monter ensemble ou pas du tout
+      go-dependencies:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps(web)"
+    groups:
+      npm-dependencies:
+        patterns: ["*"]
+
+  # les actions epinglees a une majeure (@v4) recoivent les correctifs, mais
+  # pas les changements de majeure : Dependabot les signale
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "ci"

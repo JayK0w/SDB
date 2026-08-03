@@ -1,0 +1,25 @@
+# Vulnérabilités connues, acceptées explicitement.
+#
+# Format : <ID OSV>  # justification
+#
+# Une entrée ici est une DETTE, pas un classement sans suite : chacune doit
+# porter la raison de son acceptation et être réexaminée à la date ci-dessous.
+# Toute vulnérabilité absente de cette liste fait échouer la CI.
+#
+# Dernière revue : 2026-08-03
+# Prochaine revue : 2026-11-03
+
+# --- github.com/docker/docker : vulnérabilités du DÉMON, pas du client ------
+#
+# Le module docker/docker embarque à la fois le client et le serveur (moby).
+# SDB n'utilise que le client ; le code vulnérable est côté démon. govulncheck
+# les signale parce que les init() du paquet sont atteignables, pas parce que
+# les symboles vulnérables sont appelés.
+#
+# Aucun correctif n'existe pour docker/docker : il vit dans moby/moby/v2, un
+# autre chemin de module. Migrer vers moby/v2 (encore en beta) est un chantier
+# à part entière, à réévaluer quand il sera stable.
+
+GO-2026-5668  # CVE-2026-41568 — course sur `docker cp` (symlink) créant des fichiers sur l'HÔTE. Direction conteneur->hôte : SDB n'appelle jamais CopyFromContainer, uniquement CopyToContainer.
+GO-2026-4887  # CVE-2026-34040 — contournement des plugins AuthZ du démon sur corps surdimensionné. Propriété du démon exploité, pas du client. SDB n'implémente ni ne dépend d'un plugin AuthZ.
+GO-2026-4883  # CVE-2026-33997 — erreur off-by-one dans la validation des privilèges des plugins hérités du démon. SDB n'installe ni n'utilise de plugin Docker.

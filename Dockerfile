@@ -10,7 +10,7 @@ RUN npm run build
 
 # --- Étape 2 : backend -------------------------------------------------------
 # 1.25+ requis : les dépendances transitives otel du SDK Docker l'exigent
-FROM golang:1.25-alpine AS backend
+FROM golang:1.26-alpine AS backend
 ARG VERSION=docker
 WORKDIR /src
 # couche modules séparée : cachée entre deux builds source-only
