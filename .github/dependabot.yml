@@ -1,8 +1,16 @@
 # Mises a jour de dependances automatisees.
 #
 # govulncheck (scripts/vulncheck.sh) ne signale une CVE qu'une fois publiee et
-# atteignable ; Dependabot reduit la fenetre en proposant les montees de
-# version en amont. Les deux se completent : l'un detecte, l'autre previent.
+# atteignable ; Dependabot reduit la fenetre en proposant les montees en
+# amont. Les deux se completent : l'un detecte, l'autre previent.
+#
+# REGLE DE GROUPEMENT : les correctifs et montees mineures sont groupes -- ils
+# doivent passer sans friction, c'est par la qu'arrivent les correctifs de
+# securite. Les montees MAJEURES sortent en PR separees, une par lot : les
+# empiler rend la PR inreviewable et un seul incompatible bloque tous les
+# autres. Vecu : un premier groupage sans cette separation a produit une PR
+# melant TypeScript 7, Vite 8, vue-router 5 et pinia 4, rendue rouge par une
+# seule incompatibilite vue-tsc/TypeScript.
 version: 2
 
 updates:
@@ -14,10 +22,10 @@ updates:
     commit-message:
       prefix: "deps"
     groups:
-      # une PR par lot plutot qu'une par module : le SDK Docker et ses
-      # dependances transitives doivent monter ensemble ou pas du tout
-      go-dependencies:
+      go-minor-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      # les majeures Go sortent seules, hors groupe
 
   - package-ecosystem: npm
     directory: /web
@@ -27,8 +35,15 @@ updates:
     commit-message:
       prefix: "deps(web)"
     groups:
-      npm-dependencies:
+      npm-minor-patch:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
+      # typescript / vue-tsc / vite doivent monter ENSEMBLE et delibérement :
+      # vue-tsc s'appuie sur des chemins internes de typescript, une majeure
+      # desynchronisee casse le type-check
+      toolchain-majors:
+        patterns: ["typescript", "vue-tsc", "vite", "@vitejs/*"]
+        update-types: ["major"]
 
   # les actions epinglees a une majeure (@v4) recoivent les correctifs, mais
   # pas les changements de majeure : Dependabot les signale
