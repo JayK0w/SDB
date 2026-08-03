@@ -138,10 +138,15 @@ func run() error {
 
 	// alertes sortantes : troisième consommateur du même flux, ne retient
 	// que les fins en échec. nil si aucune URL n'est configurée.
-	alerts := notify.New(cfg.Maintenance.AlertWebhook, cfg.Maintenance.AlertTimeout, logger)
+	alertFormat, err := notify.ParseFormat(cfg.Maintenance.AlertFormat)
+	if err != nil {
+		return fmt.Errorf("SDB_ALERT_FORMAT: %w", err)
+	}
+	alerts := notify.New(cfg.Maintenance.AlertWebhook, cfg.Maintenance.AlertTimeout, logger,
+		notify.WithFormat(alertFormat))
 	if alerts != nil {
 		publisher = append(publisher, alerts)
-		logger.Info("outbound alerting enabled")
+		logger.Info("outbound alerting enabled", "format", string(alertFormat))
 	} else {
 		logger.Warn("no alert webhook configured; backup failures are only visible in /metrics and logs")
 	}

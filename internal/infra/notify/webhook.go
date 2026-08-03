@@ -7,7 +7,6 @@ package notify
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -29,6 +28,7 @@ const queueSize = 64
 // abandonnée et comptabilisée plutôt que de ralentir une sauvegarde.
 type Webhook struct {
 	url    string
+	format Format
 	client *http.Client
 	logger *slog.Logger
 
@@ -58,9 +58,21 @@ type alert struct {
 	Source    string    `json:"source"`
 }
 
+// Option : réglage optionnel, appliqué à la construction.
+type Option func(*Webhook)
+
+// WithFormat : schéma de la charge utile. Par défaut FormatSDB (JSON natif).
+func WithFormat(f Format) Option {
+	return func(w *Webhook) {
+		if f != "" {
+			w.format = f
+		}
+	}
+}
+
 // New : webhook prêt à publier. url vide = nil, l'appelant l'omet du
 // MultiPublisher.
-func New(url string, timeout time.Duration, logger *slog.Logger) *Webhook {
+func New(url string, timeout time.Duration, logger *slog.Logger, opts ...Option) *Webhook {
 	if url == "" {
 		return nil
 	}
@@ -72,9 +84,13 @@ func New(url string, timeout time.Duration, logger *slog.Logger) *Webhook {
 	}
 	w := &Webhook{
 		url:    url,
+		format: FormatSDB,
 		client: &http.Client{Timeout: timeout},
 		logger: logger,
 		queue:  make(chan alert, queueSize),
+	}
+	for _, opt := range opts {
+		opt(w)
 	}
 	w.wg.Add(1)
 	go w.loop()
@@ -127,7 +143,7 @@ func (w *Webhook) loop() {
 }
 
 func (w *Webhook) post(a alert) {
-	body, err := json.Marshal(a)
+	body, err := encode(a, w.format)
 	if err != nil {
 		w.logger.Error("encoding alert", "error", err)
 		return

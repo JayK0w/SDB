@@ -50,6 +50,10 @@ services:
       # logs. Peut contenir un jeton : la renseigner dans le .env, jamais ici.
       SDB_ALERT_WEBHOOK: ${SDB_ALERT_WEBHOOK:-}
       SDB_ALERT_TIMEOUT: ${SDB_ALERT_TIMEOUT:-10s}
+      # schéma de la charge utile : "sdb" (JSON natif, récepteur générique)
+      # ou "slack" (Incoming Webhook, aussi compris par Mattermost et
+      # Rocket.Chat). Une valeur inconnue empêche le démarrage.
+      SDB_ALERT_FORMAT: ${SDB_ALERT_FORMAT:-sdb}
       # /metrics Prometheus (désactivé si vide) ; exporter la variable ou
       # la mettre dans un fichier .env à côté de ce compose
       SDB_METRICS_TOKEN: ${SDB_METRICS_TOKEN:-}

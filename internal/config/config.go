@@ -84,6 +84,13 @@ type Maintenance struct {
 	AlertWebhook string
 	// AlertTimeout : délai maximal d'un envoi d'alerte.
 	AlertTimeout time.Duration
+	// AlertFormat : schéma de la charge utile — "sdb" (JSON natif, pour un
+	// récepteur générique) ou "slack" (schéma Incoming Webhook, également
+	// compris par Mattermost et Rocket.Chat). Validé au démarrage : une
+	// valeur inconnue est refusée plutôt que repliée silencieusement, sinon
+	// une faute de frappe produirait des alertes que Slack rejette sans que
+	// personne ne le sache.
+	AlertFormat string
 	// VerifyInterval : intervalle entre restaurations de vérification (le
 	// dernier snapshot de chaque dépôt est réellement extrait dans un
 	// volume jetable, avec contrôle des empreintes). C'est la seule preuve
@@ -198,6 +205,7 @@ func Load() (*Config, error) {
 			StrictPartial:   strictPartial,
 			AlertWebhook:    os.Getenv("SDB_ALERT_WEBHOOK"),
 			AlertTimeout:    alertTimeout,
+			AlertFormat:     getenv("SDB_ALERT_FORMAT", "sdb"),
 			VerifyInterval:  verifyInterval,
 			ScheduleCatchUp: scheduleCatchUp,
 		},
