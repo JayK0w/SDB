@@ -249,9 +249,13 @@ internal/usecase/   business orchestration (phase 3)
 internal/infra/     SQLite, Docker SDK, Restic, crypto adapters (phase 2)
 internal/api/http/  Gin REST API + WebSocket hub (phase 4)
 web/                Vue 3 frontend (phase 5)
-docs/               operating runbook
+docs/               operating runbook + current deployment state
 deploy/             Prometheus alert rules
 ```
+
+New here? [docs/ETAT-DES-LIEUX.md](docs/ETAT-DES-LIEUX.md) (French) is the
+resume point: what shipped, what this deployment actually runs, what is still
+open.
 
 The domain layer defines every port (`UserRepository`, `ContainerRuntime`,
 `SnapshotEngine`, `Cipher`, ...); outer layers depend inward only.
