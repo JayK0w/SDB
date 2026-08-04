@@ -238,9 +238,12 @@ func run() error {
 		Metrics:      collector.Handler(),
 		MetricsToken: cfg.Auth.MetricsToken,
 	}, httpapi.Services{
-		Auth:        authSvc,
-		Containers:  usecase.NewContainerService(runtime),
-		Storages:    usecase.NewStorageService(storageRepo, engine, logger),
+		Auth:       authSvc,
+		Containers: usecase.NewContainerService(runtime),
+		// la copie secondaire s'active a n'importe quel moment : brancher une
+		// copie sur un depot deja rempli recopie l'existant immediatement
+		Storages: usecase.NewStorageService(storageRepo, engine, logger,
+			usecase.WithCopyBackfill(replicationSvc)),
 		Backups:     backupSvc,
 		Restores:    restoreSvc,
 		Scheduler:   schedulerSvc,

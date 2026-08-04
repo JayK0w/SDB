@@ -116,6 +116,13 @@ source — chunker parameters can only be inherited at creation, and without
 them copied data can occupy twice the space. It also makes several copies of
 one repository a non-decision.
 
+**It is optional, strongly advised, and can be switched on at any time.** SDB
+runs without a secondary copy — it just says so on every startup, and the
+storage page says it louder. Enabling it later requires no reconfiguration of
+what already exists: creating the copy backfills the snapshots already in the
+source repository straight away, in the background, so turning on 3-2-1
+protects the existing history and not merely the backups that follow.
+
 Two triggers, one mechanism:
 
 - **after every successful backup**, before retention — pruning the primary

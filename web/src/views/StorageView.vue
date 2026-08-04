@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { api } from '@/lib/api'
 import { formatDate, shortID } from '@/lib/format'
@@ -15,6 +15,7 @@ const storages = ref<Storage[]>([])
 const loading = ref(true)
 const error = ref('')
 const showCreate = ref(false)
+const createAsCopyOf = ref(0)
 const expanded = ref<number | null>(null)
 const snapshots = ref<Snapshot[]>([])
 const snapshotsLoading = ref(false)
@@ -31,6 +32,20 @@ function errMsg(e: unknown): string {
 
 function storageName(id: number): string {
   return storages.value.find((s) => s.id === id)?.name ?? `#${id}`
+}
+
+const hasCopy = computed(() => storages.value.some((s) => s.copy_of_storage_id))
+
+// ouvre la creation deja positionnee sur « copie de <premier depot principal> » :
+// le conseil doit mener au geste, pas a un formulaire vierge
+function startCopyCreation(): void {
+  createAsCopyOf.value = storages.value.find((s) => !s.copy_of_storage_id)?.id ?? 0
+  showCreate.value = true
+}
+
+function startPlainCreation(): void {
+  createAsCopyOf.value = 0
+  showCreate.value = true
 }
 
 function statusOf(id: number): Replication | undefined {
@@ -131,20 +146,30 @@ async function remove(storage: Storage): Promise<void> {
         <button class="btn btn-ghost" :disabled="replicationLoading" @click="loadReplication">
           {{ replicationLoading ? 'Mesure…' : 'État des copies' }}
         </button>
-        <button v-if="auth.isAdmin" class="btn btn-primary" @click="showCreate = true">Nouveau stockage</button>
+        <button v-if="auth.isAdmin" class="btn btn-primary" @click="startPlainCreation">Nouveau stockage</button>
       </div>
     </header>
 
     <!-- Sans seconde copie, chaque sauvegarde ne tient qu'a un seul support :
          le dire explicitement plutot que de laisser l'absence passer pour un
          etat normal. -->
-    <p
-      v-if="!loading && !error && storages.length > 0 && storages.every((s) => !s.copy_of_storage_id)"
-      class="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
+    <div
+      v-if="!loading && !error && storages.length > 0 && !hasCopy"
+      class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-200"
     >
-      Aucune copie secondaire : toutes vos sauvegardes vivent sur un support unique. La règle 3-2-1
-      demande un second dépôt — créez-en un et désignez son dépôt source.
-    </p>
+      <p>
+        <strong>Aucune copie secondaire.</strong>
+        Toutes vos sauvegardes vivent sur un support unique : le perdre ou le corrompre les perd
+        toutes. Le verrou append-only protège de la suppression, pas de la perte du support.
+        <span class="block text-xs text-amber-200/80">
+          SDB fonctionne sans, et vous pouvez l'activer à tout moment : les snapshots déjà présents
+          sont recopiés dès la création du second dépôt.
+        </span>
+      </p>
+      <button v-if="auth.isAdmin" class="btn btn-primary shrink-0" @click="startCopyCreation">
+        Ajouter une copie secondaire
+      </button>
+    </div>
 
     <p v-if="loading" class="text-sm text-zinc-500">Chargement…</p>
     <p v-else-if="error" class="text-sm text-red-400">{{ error }}</p>
@@ -237,6 +262,12 @@ async function remove(storage: Storage): Promise<void> {
       </div>
     </div>
 
-    <StorageModal v-if="showCreate" :sources="storages" @close="showCreate = false" @created="load" />
+    <StorageModal
+      v-if="showCreate"
+      :sources="storages"
+      :default-copy-of="createAsCopyOf"
+      @close="showCreate = false"
+      @created="load"
+    />
   </div>
 </template>

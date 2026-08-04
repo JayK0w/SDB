@@ -436,6 +436,47 @@ voulu.
 Une mise à jour majeure peut invalider les jetons existants (c'était le cas de
 la révocation de session) : prévoir une reconnexion.
 
+### Activer la copie secondaire après coup
+
+SDB fonctionne sans seconde copie — c'est le mode par défaut, et il est
+signalé à chaque démarrage. L'activer plus tard ne demande **aucune
+reconfiguration** de ce qui existe : le lien est porté par la copie, pas par
+la source.
+
+1. Créer un stockage en désignant son **dépôt source** (« Ajouter une copie
+   secondaire » sur la page Stockage, ou `copy_of_storage_id` à la création
+   par l'API). De préférence sur un **autre support** que le dépôt principal :
+   c'est tout l'objet de la règle.
+2. Le dépôt est initialisé depuis sa source (`--copy-chunker-params`), puis
+   **les snapshots déjà présents sont recopiés immédiatement**, en tâche de
+   fond. Activer la seconde copie ne protège donc pas que les sauvegardes à
+   venir : l'historique part aussi.
+3. Suivre l'avancement — `pending` doit descendre à 0 :
+
+```bash
+curl -s -H "Authorization: Bearer $JWT" http://127.0.0.1:8080/api/v1/replication | jq
+```
+
+La première recopie re-téléverse tout (restic ré-encrypte) : sur un gros dépôt
+distant, compter en heures. Un arrêt de SDB pendant l'opération est sans
+conséquence — `restic copy` saute ce qui est déjà copié et la passe de
+réconciliation reprend le reste.
+
+Points d'attention :
+
+- **Le rattachement ne se change plus** après création. Se tromper de source
+  se corrige en créant une autre copie, pas en rebranchant celle-ci.
+- **Un dépôt de copie refuse les sauvegardes directes** : il disparaît des
+  sélecteurs de sauvegarde et de planification, et reste dans celui de
+  restauration.
+- Le marquer **append-only** est cohérent avec son rôle : SDB n'y appliquera
+  jamais de rétention, la copie garde donc l'historique complet même si le
+  principal est purgé.
+- Si le dépôt de destination **existe déjà** et contient des données, il est
+  réutilisé tel quel : il ne peut simplement plus hériter des paramètres de
+  découpage de la source (ils sont fixés à l'initialisation), ce qui peut
+  coûter de l'espace en double.
+
 ### Exercice de restauration (à faire, pas à lire)
 
 Les vérifications automatiques prouvent qu'un snapshot se matérialise ; elles

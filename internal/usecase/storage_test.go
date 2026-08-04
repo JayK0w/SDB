@@ -3,15 +3,42 @@ package usecase
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
-func newStorageFixture() (*StorageService, *memStorages, *fakeEngine) {
+func newStorageFixture(opts ...StorageOption) (*StorageService, *memStorages, *fakeEngine) {
 	storages := newMemStorages()
 	engine := &fakeEngine{}
-	return NewStorageService(storages, engine, discardLogger()), storages, engine
+	return NewStorageService(storages, engine, discardLogger(), opts...), storages, engine
+}
+
+// fakeBackfiller : retient les recopies initiales demandées.
+type fakeBackfiller struct {
+	mu    sync.Mutex
+	calls []int64
+	done  chan struct{}
+}
+
+func newFakeBackfiller() *fakeBackfiller {
+	return &fakeBackfiller{done: make(chan struct{}, 4)}
+}
+
+func (f *fakeBackfiller) Replicate(_ context.Context, copyID int64) (*ReplicationStatus, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, copyID)
+	f.mu.Unlock()
+	f.done <- struct{}{}
+	return &ReplicationStatus{CopyID: copyID}, nil
+}
+
+func (f *fakeBackfiller) backfilled() []int64 {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]int64(nil), f.calls...)
 }
 
 func TestStorageCreateGeneratesPasswordAndInitialisesRepo(t *testing.T) {
@@ -95,6 +122,56 @@ func TestStorageCreateInitialisesCopyFromItsSource(t *testing.T) {
 	}
 	if engine.ensureCopies != 1 {
 		t.Fatalf("EnsureCopyTarget calls = %d, want 1 (sinon les paramètres de découpage ne sont pas hérités)", engine.ensureCopies)
+	}
+}
+
+// La copie secondaire doit pouvoir être branchée APRÈS COUP, sur un dépôt qui
+// contient déjà des mois de sauvegardes. Sans recopie immédiate de l'existant,
+// activer la 3-2-1 ne protégerait que les sauvegardes suivantes — et l'écart
+// resterait maximal jusqu'à la première passe de réconciliation.
+func TestCreatingACopyBackfillsExistingSnapshots(t *testing.T) {
+	ctx := context.Background()
+	backfiller := newFakeBackfiller()
+	svc, _, _ := newStorageFixture(WithCopyBackfill(backfiller))
+
+	primary := &domain.StorageConfig{Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary"}
+	if err := svc.Create(ctx, primary); err != nil {
+		t.Fatal(err)
+	}
+	copyCfg := &domain.StorageConfig{
+		Name: "offsite", Type: domain.StorageLocal, Endpoint: "/srv/offsite", CopyOf: primary.ID,
+	}
+	if err := svc.Create(ctx, copyCfg); err != nil {
+		t.Fatalf("Create(copy) error: %v", err)
+	}
+
+	// la recopie est détachée : la création ne peut pas bloquer des heures
+	select {
+	case <-backfiller.done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no backfill was started: enabling the second copy after the fact would leave the existing snapshots behind")
+	}
+	if got := backfiller.backfilled(); len(got) != 1 || got[0] != copyCfg.ID {
+		t.Fatalf("backfilled = %v, want [%d]", got, copyCfg.ID)
+	}
+}
+
+// Créer un dépôt principal ne déclenche aucune recopie : il n'y a rien à
+// rattraper, et une passe inutile sur chaque création coûterait deux listings
+// de dépôt.
+func TestCreatingAPrimaryDoesNotBackfill(t *testing.T) {
+	backfiller := newFakeBackfiller()
+	svc, _, _ := newStorageFixture(WithCopyBackfill(backfiller))
+
+	if err := svc.Create(context.Background(), &domain.StorageConfig{
+		Name: "primary", Type: domain.StorageLocal, Endpoint: "/srv/primary",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-backfiller.done:
+		t.Fatal("a primary storage must not trigger a replication pass")
+	case <-time.After(200 * time.Millisecond):
 	}
 }
 

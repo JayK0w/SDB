@@ -12,16 +12,42 @@ import (
 // StorageService : un stockage présent dans SDB est toujours utilisable —
 // la création initialise (ou vérifie) le dépôt restic.
 type StorageService struct {
-	storages domain.StorageRepository
-	engine   domain.SnapshotEngine
-	logger   *slog.Logger
+	storages   domain.StorageRepository
+	engine     domain.SnapshotEngine
+	logger     *slog.Logger
+	backfiller CopyBackfiller
 }
 
-func NewStorageService(storages domain.StorageRepository, engine domain.SnapshotEngine, logger *slog.Logger) *StorageService {
+// CopyBackfiller : rattrapage des snapshots DÉJÀ présents dans le dépôt source
+// au moment où une copie secondaire est branchée. Implémenté par
+// ReplicationService.
+type CopyBackfiller interface {
+	Replicate(ctx context.Context, copyID int64) (*ReplicationStatus, error)
+}
+
+// StorageOption : réglage optionnel du service, appliqué à la construction.
+type StorageOption func(*StorageService)
+
+// WithCopyBackfill : lance la recopie de l'existant dès qu'une copie
+// secondaire est créée. Sans lui, brancher une copie sur un dépôt qui contient
+// déjà des mois de sauvegardes ne protégerait que les suivantes, et l'écart de
+// réplication resterait au maximum jusqu'à la première passe de
+// réconciliation.
+func WithCopyBackfill(b CopyBackfiller) StorageOption {
+	return func(s *StorageService) { s.backfiller = b }
+}
+
+func NewStorageService(storages domain.StorageRepository, engine domain.SnapshotEngine,
+	logger *slog.Logger, opts ...StorageOption) *StorageService {
+
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &StorageService{storages: storages, engine: engine, logger: logger}
+	s := &StorageService{storages: storages, engine: engine, logger: logger}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 // Create : mot de passe restic généré si absent, dépôt initialisé, et
@@ -81,7 +107,44 @@ func (s *StorageService) Create(ctx context.Context, cfg *domain.StorageConfig) 
 		return fmt.Errorf("initialising restic repository: %w", initErr)
 	}
 	s.logger.Info("storage created", "name", cfg.Name, "type", cfg.Type, "copy_of", cfg.CopyOf)
+	if source != nil {
+		s.startBackfill(cfg.ID, cfg.Name, source.Name)
+	}
 	return nil
+}
+
+// backfillTimeout : la recopie initiale d'un dépôt déjà fourni peut durer des
+// heures (elle re-téléverse tout, la copie ré-encrypte).
+const backfillTimeout = 24 * time.Hour
+
+// startBackfill : recopie l'existant, en tâche de fond.
+//
+// C'est ce qui rend la copie secondaire activable APRÈS COUP : on branche une
+// copie sur un dépôt qui contient déjà l'historique, et cet historique part
+// tout de suite au lieu d'attendre la prochaine passe de réconciliation.
+//
+// Détachée volontairement — la création d'un stockage ne peut pas bloquer
+// pendant des heures. Un arrêt de SDB pendant la recopie n'est pas un
+// problème : `restic copy` saute ce qui est déjà copié, et la passe de
+// réconciliation reprend le reste.
+func (s *StorageService) startBackfill(copyID int64, copyName, sourceName string) {
+	if s.backfiller == nil {
+		return
+	}
+	log := s.logger.With("copy", copyName, "source", sourceName)
+	log.Info("backfilling the secondary copy with existing snapshots")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), backfillTimeout)
+		defer cancel()
+		st, err := s.backfiller.Replicate(ctx, copyID)
+		if err != nil {
+			// pas d'échec de création pour autant : le stockage est valide, et
+			// la réconciliation retentera
+			log.Error("initial backfill failed; the reconciliation pass will retry", "error", err)
+			return
+		}
+		log.Info("initial backfill finished", "copied_snapshots", st.CopiedSnapshots, "pending", st.Pending)
+	}()
 }
 
 // copySource : valide la source d'une copie secondaire.

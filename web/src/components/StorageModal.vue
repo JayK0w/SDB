@@ -10,7 +10,9 @@ const emit = defineEmits<{ close: []; created: [] }>()
 
 // depots principaux existants : seuls candidats comme source d'une copie
 // secondaire (les chaines de copies sont refusees par l'API)
-const props = defineProps<{ sources?: Storage[] }>()
+// defaultCopyOf : ouvre directement le formulaire en mode « copie secondaire
+// de ce depot », quand l'utilisateur vient du conseil affiche sur la liste
+const props = defineProps<{ sources?: Storage[]; defaultCopyOf?: number }>()
 
 const copyCandidates = computed(() => (props.sources ?? []).filter((s) => !s.copy_of_storage_id))
 
@@ -94,7 +96,7 @@ const endpoint = ref('')
 const appendOnly = ref(false)
 // 0 = depot principal. Fixe a la creation : c'est a l'init que le depot herite
 // des parametres de decoupage de sa source, jamais apres.
-const copyOf = ref(0)
+const copyOf = ref(props.defaultCopyOf ?? 0)
 // mot de passe restitue une seule fois par l'API : tant qu'il est affiche,
 // la modale reste ouverte, sinon il est perdu pour toujours
 const createdPassword = ref('')
@@ -254,6 +256,12 @@ async function submit(): Promise<void> {
           Une copie secondaire n'est jamais sauvegardée directement : elle reçoit les snapshots de sa
           source après chaque sauvegarde, puis à chaque passe de réconciliation. Elle est initialisée
           depuis sa source — ce rattachement ne peut plus changer ensuite.
+        </p>
+        <p v-if="copyOf" class="mt-2 rounded-lg border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-xs text-sky-200">
+          Les snapshots <strong>déjà présents</strong> dans le dépôt source seront recopiés dès la
+          création, en tâche de fond : activer la seconde copie ne protège pas que les sauvegardes à
+          venir. Selon le volume et le lien, cette première recopie peut durer longtemps ; son
+          avancement se lit dans « État des copies ».
         </p>
       </div>
 
