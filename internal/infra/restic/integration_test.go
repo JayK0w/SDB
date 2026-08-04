@@ -349,6 +349,60 @@ func TestIntegrationForgetAppliesRetention(t *testing.T) {
 	}
 }
 
+// La sonde de cible contre un VRAI restic.
+//
+// Elle enchaine quatre sous-commandes dont deux qu'aucun autre test
+// d'integration n'exerce dans cet ordre (`forget <id> --prune` sur un depot a
+// un seul snapshot, `snapshots --json --tag`). Contre des doubles, on ne
+// verifie que la forme des commandes : si restic renommait un flag ou
+// changeait la semantique d'un code de sortie, la sonde annoncerait
+// tranquillement « cible invalide » sur une cible parfaitement saine — ce qui
+// est pire que pas de sonde, puisqu'un exploitant croirait ses identifiants
+// mauvais et irait en fabriquer d'autres.
+func TestIntegrationProbeExercisesTheFourRightsForReal(t *testing.T) {
+	rt := newRuntime(t)
+	engine := New(rt, testResticImage)
+	target := testStorageReal(t)
+	ctx := context.Background()
+
+	probe, err := engine.TestTarget(ctx, target, nil)
+	if err != nil {
+		t.Fatalf("TestTarget() : %v", err)
+	}
+	if !probe.OK() {
+		t.Fatalf("sonde en echec sur une cible saine, etape %q : %+v", probe.FailedStep(), probe.Steps)
+	}
+
+	want := []string{domain.ProbeInit, domain.ProbeWrite, domain.ProbeRead, domain.ProbeDelete}
+	if len(probe.Steps) != len(want) {
+		t.Fatalf("%d etapes, want %d : %+v", len(probe.Steps), len(want), probe.Steps)
+	}
+	for i, name := range want {
+		if probe.Steps[i].Name != name {
+			t.Fatalf("etape %d = %q, want %q", i, probe.Steps[i].Name, name)
+		}
+	}
+
+	// Le depot de sonde est un SOUS-CHEMIN : la cible demandee ne doit pas
+	// avoir ete initialisee, sinon la creation qui suit trouverait un depot
+	// deja la et n'aurait plus rien a prouver.
+	if probe.Residue == target.Endpoint {
+		t.Fatalf("la sonde a travaille dans la cible demandee (%q)", target.Endpoint)
+	}
+	if err := engine.Check(ctx, target); err == nil {
+		t.Fatalf("la cible %q est un depot restic apres la sonde : elle aurait du rester vierge", target.Endpoint)
+	}
+
+	// Et le depot de sonde, lui, doit etre reste coherent apres la purge :
+	// un `forget --prune` qui casse le depot ferait passer une cible saine
+	// pour saine par accident.
+	residue := *target
+	residue.Endpoint = probe.Residue
+	if err := engine.Check(ctx, &residue); err != nil {
+		t.Fatalf("depot de sonde incoherent apres forget --prune : %v", err)
+	}
+}
+
 // Un snapshot inexistant doit remonter une erreur, pas reussir en silence.
 func TestIntegrationRestoreUnknownSnapshotFails(t *testing.T) {
 	rt := newRuntime(t)

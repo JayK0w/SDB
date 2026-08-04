@@ -479,6 +479,46 @@ voulu.
 Une mise à jour majeure peut invalider les jetons existants (c'était le cas de
 la révocation de session) : prévoir une reconnexion.
 
+### Éprouver une cible avant de la créer
+
+À faire **avant** toute création de dépôt distant, et systématiquement après
+avoir généré une nouvelle clé d'accès.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $JWT" -H 'Content-Type: application/json' \
+  -d '{"name":"offsite","type":"s3","endpoint":"s3.eu-central-003.backblazeb2.com/mon-bucket/sdb",
+       "credentials":{"AWS_ACCESS_KEY_ID":"...","AWS_SECRET_ACCESS_KEY":"..."}}' \
+  http://127.0.0.1:8080/api/v1/storage/test | jq
+```
+
+La réponse donne un verdict **par droit**, dans l'ordre où ils cassent :
+
+| Étape | Ce qu'elle prouve |
+|---|---|
+| `copy-pair` | la paire copie/source ne se dispute pas une variable d'identifiants (local, sans réseau) |
+| `init` | lister le backend et y écrire |
+| `write` | écrire des données et poser un verrou |
+| `read` | **relire le snapshot qu'on vient d'écrire** |
+| `delete` | supprimer paquets, index et snapshot |
+
+`failed_step` nomme ce qu'il faut corriger. Les étapes suivantes n'ont pas été
+tentées : leur absence ne dit rien sur elles.
+
+Pourquoi ne pas se contenter de créer le dépôt : la création lance `restic
+init`, qui n'exerce que **lister** et **écrire**. Une clé sans droit de
+suppression passe la création sans broncher et ne casse qu'au premier retrait
+de verrou ou à la première purge — sur la copie secondaire, c'est-à-dire des
+jours plus tard et sur le dépôt qui doit tenir quand le principal a lâché.
+
+Deux points à connaître :
+
+- La sonde travaille dans un **sous-chemin dédié** (`sdb-connectivity-probe-…`),
+  jamais à l'emplacement demandé : la lancer sur une cible qui contient déjà un
+  dépôt ne peut pas l'abîmer.
+- Elle **laisse un résidu** : restic ne sait pas détruire un dépôt, `config` et
+  `keys/` restent (quelques centaines d'octets). Le champ `residue` de la
+  réponse donne le chemin exact à effacer si vous y tenez.
+
 ### Activer la copie secondaire après coup
 
 SDB fonctionne sans seconde copie — c'est le mode par défaut, et il est

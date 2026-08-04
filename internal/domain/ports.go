@@ -161,6 +161,19 @@ type SnapshotEngine interface {
 	Forget(ctx context.Context, storage *StorageConfig, policy RetentionPolicy) error
 	// Check : vérification d'intégrité du dépôt.
 	Check(ctx context.Context, storage *StorageConfig) error
+	// TestTarget : éprouve une cible sans toucher au dépôt qu'elle
+	// désigne — la sonde travaille dans un SOUS-CHEMIN dédié, jamais à
+	// l'emplacement demandé. Tester une configuration qui pointe sur un
+	// dépôt déjà rempli ne doit pas pouvoir l'abîmer.
+	//
+	// copySource : source déclarée quand la cible est une copie secondaire,
+	// nil sinon ; sert à refuser une paire dont les identifiants de backend
+	// entrent en conflit, avant même d'ouvrir le réseau.
+	//
+	// L'erreur retournée signale un défaut d'INFRASTRUCTURE (démon Docker
+	// injoignable, configuration illisible) : un droit manquant sur la cible
+	// n'est pas une erreur, c'est le résultat que porte TargetProbe.
+	TestTarget(ctx context.Context, storage, copySource *StorageConfig) (*TargetProbe, error)
 }
 
 // --- Ports sécurité (implémentés par internal/infra/crypto) ---

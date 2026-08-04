@@ -54,6 +54,38 @@ func (s *Server) handleCreateStorage(c *gin.Context) {
 	c.JSON(http.StatusCreated, toStorageCreatedDTO(*cfg))
 }
 
+// probeTimeout : plafond d'un test de cible. Généreux pour un lien lent, mais
+// borné : un opérateur attend devant son formulaire.
+const probeTimeout = 3 * time.Minute
+
+// handleTestStorage : éprouve une cible SANS la créer.
+//
+// Synchrone, contrairement à /check et /verify : ces deux-là peuvent durer des
+// heures sur un gros dépôt, la sonde travaille sur un dépôt qu'elle vient de
+// créer et qui contient un seul fichier. Répondre 202 obligerait l'interface à
+// aller pêcher le résultat ailleurs pour une réponse qui arrive en quelques
+// secondes.
+//
+// 200 même quand une étape échoue : la sonde a fait son travail, son verdict
+// EST la réponse. Un 4xx ferait passer « ta clé n'a pas le droit de
+// supprimer » pour une requête malformée.
+func (s *Server) handleTestStorage(c *gin.Context) {
+	var req storageRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		s.respondError(c, fmt.Errorf("%w: %v", domain.ErrInvalidInput, err))
+		return
+	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), probeTimeout)
+	defer cancel()
+
+	probe, err := s.svc.Storages.TestTarget(ctx, req.toDomain(0))
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toProbeDTO(probe))
+}
+
 func (s *Server) handleUpdateStorage(c *gin.Context) {
 	id, err := pathID(c)
 	if err != nil {

@@ -139,6 +139,18 @@ type fakeEngine struct {
 	ensureCopies  int
 	snapshotsByID map[int64][]domain.Snapshot
 	copyFn        func(ctx context.Context) error
+
+	// sonde de cible : les configurations recues, pour verifier que le usecase
+	// ne persiste rien et transmet bien la source de copie
+	probeErr    error
+	probeResult *domain.TargetProbe
+	probeCalls  []probeCall
+}
+
+// probeCall : une invocation de TestTarget, telle que les tests la relisent.
+type probeCall struct {
+	storage    domain.StorageConfig
+	copySource *domain.StorageConfig
 }
 
 // copyCall : une invocation de Copy, telle que les tests la relisent.
@@ -271,6 +283,27 @@ func (f *fakeEngine) Check(context.Context, *domain.StorageConfig) error {
 	f.checkCalls++
 	f.mu.Unlock()
 	return f.checkErr
+}
+
+func (f *fakeEngine) TestTarget(_ context.Context, storage, copySource *domain.StorageConfig) (*domain.TargetProbe, error) {
+	f.mu.Lock()
+	f.probeCalls = append(f.probeCalls, probeCall{storage: *storage, copySource: copySource})
+	f.mu.Unlock()
+	if f.probeErr != nil {
+		return nil, f.probeErr
+	}
+	if f.probeResult != nil {
+		return f.probeResult, nil
+	}
+	p := &domain.TargetProbe{}
+	p.Pass(domain.ProbeInit)
+	return p, nil
+}
+
+func (f *fakeEngine) probes() []probeCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]probeCall(nil), f.probeCalls...)
 }
 
 func (f *fakeEngine) backups() int {
