@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -117,6 +118,51 @@ func TestVerificationReportsMeasuredDuration(t *testing.T) {
 	}
 	if got[0].Duration <= 0 {
 		t.Fatalf("Duration = %s on failure, want the measured time", got[0].Duration)
+	}
+}
+
+// La passe planifiée et un déclenchement manuel visent le même dépôt. Sans
+// verrou, deux restaurations de vérification tourneraient en parallèle sur la
+// même source — deux volumes jetables écrits, deux fois les I/O, pour prouver
+// deux fois la même chose.
+func TestConcurrentVerificationsOfOneStorageDoNotOverlap(t *testing.T) {
+	svc, _, engine, _ := newVerifyFixture(t)
+
+	var mu sync.Mutex
+	var inFlight, maxInFlight int
+	engine.restoreFn = func(context.Context) error {
+		mu.Lock()
+		inFlight++
+		if inFlight > maxInFlight {
+			maxInFlight = inFlight
+		}
+		mu.Unlock()
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		inFlight--
+		mu.Unlock()
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := svc.VerifyStorage(context.Background(), 1); err != nil {
+				t.Errorf("VerifyStorage() error: %v", err)
+			}
+		}()
+	}
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if maxInFlight != 1 {
+		t.Fatalf("%d vérifications simultanées sur le même dépôt, want 1", maxInFlight)
+	}
+	if len(engine.restores) != 3 {
+		t.Fatalf("%d restaurations, want 3 (sérialisées, pas abandonnées)", len(engine.restores))
 	}
 }
 

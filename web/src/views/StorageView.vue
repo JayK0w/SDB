@@ -123,6 +123,15 @@ async function runCheck(storage: Storage): Promise<void> {
   }
 }
 
+async function runVerify(storage: Storage): Promise<void> {
+  try {
+    await api.storage.verify(storage.id)
+    toasts.success(`Vérification de restaurabilité de « ${storage.name} » lancée`)
+  } catch (e) {
+    toasts.error(errMsg(e))
+  }
+}
+
 async function remove(storage: Storage): Promise<void> {
   if (!window.confirm(`Supprimer le stockage « ${storage.name} » ? Le dépôt restic n’est pas effacé.`)) return
   try {
@@ -228,7 +237,20 @@ async function remove(storage: Storage): Promise<void> {
               {{ expanded === s.id ? 'Masquer' : 'Snapshots' }}
             </button>
             <template v-if="auth.isAdmin">
-              <button class="btn btn-ghost" @click="runCheck(s)">Vérifier</button>
+              <button
+                class="btn btn-ghost"
+                title="restic check : valide la structure du dépôt et relit une fraction des données"
+                @click="runCheck(s)"
+              >
+                Contrôler
+              </button>
+              <button
+                class="btn btn-ghost"
+                title="Restaure réellement le dernier snapshot dans un volume jetable et recompare les empreintes : la seule preuve qu'une sauvegarde est restaurable."
+                @click="runVerify(s)"
+              >
+                Prouver la restauration
+              </button>
               <button v-if="s.copy_of_storage_id" class="btn btn-ghost" @click="replicate(s)">
                 Répliquer
               </button>

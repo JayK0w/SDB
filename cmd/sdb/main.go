@@ -246,10 +246,11 @@ func run() error {
 		// copie sur un depot deja rempli recopie l'existant immediatement
 		Storages: usecase.NewStorageService(storageRepo, engine, logger,
 			usecase.WithCopyBackfill(replicationSvc)),
-		Backups:     backupSvc,
-		Restores:    restoreSvc,
-		Scheduler:   schedulerSvc,
-		Replication: replicationSvc,
+		Backups:      backupSvc,
+		Restores:     restoreSvc,
+		Scheduler:    schedulerSvc,
+		Replication:  replicationSvc,
+		Verification: verifySvc,
 	}, hub, logger)
 
 	logger.Info("HTTP API listening", "addr", cfg.Server.Addr())

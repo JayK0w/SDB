@@ -37,6 +37,11 @@ type VerificationService struct {
 
 	mu      sync.Mutex
 	running bool
+	// locks : un verrou par dépôt. La passe planifiée et un déclenchement
+	// manuel visent le même dépôt ; sans ça, deux restaurations de
+	// vérification tourneraient en parallèle sur la même source, chacune
+	// écrivant son volume jetable, pour prouver deux fois la même chose.
+	locks map[int64]*sync.Mutex
 }
 
 // VerificationResult : ce qu'une vérification vient de démontrer. La DURÉE est
@@ -74,6 +79,7 @@ func NewVerificationService(
 	s := &VerificationService{
 		containers: containers, engine: engine, storages: storages,
 		history: history, publisher: publisher, logger: logger,
+		locks: map[int64]*sync.Mutex{},
 	}
 	for _, opt := range opts {
 		opt(s)
@@ -84,6 +90,9 @@ func NewVerificationService(
 // VerifyStorage : vérifie le dernier snapshot d'un dépôt. Bloquant — appelé
 // par le planificateur de maintenance, jamais depuis une requête HTTP.
 func (s *VerificationService) VerifyStorage(ctx context.Context, storageID int64) (*domain.RestoreRecord, error) {
+	unlock := s.lock(storageID)
+	defer unlock()
+
 	storage, err := s.storages.GetByID(ctx, storageID)
 	if err != nil {
 		return nil, fmt.Errorf("loading storage config: %w", err)
@@ -245,6 +254,21 @@ func (s *VerificationService) finish(ctx context.Context, rec *domain.RestoreRec
 	} else {
 		log.Error("verification restore failed", "status", rec.Status, "error", rec.ErrorLog)
 	}
+}
+
+// lock : sérialise les vérifications d'un même dépôt, quelle que soit leur
+// origine (passe planifiée ou déclenchement manuel).
+func (s *VerificationService) lock(storageID int64) func() {
+	s.mu.Lock()
+	mu, ok := s.locks[storageID]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.locks[storageID] = mu
+	}
+	s.mu.Unlock()
+
+	mu.Lock()
+	return mu.Unlock
 }
 
 func latestSnapshot(snaps []domain.Snapshot) domain.Snapshot {

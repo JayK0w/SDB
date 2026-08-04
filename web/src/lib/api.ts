@@ -99,6 +99,9 @@ export const api = {
     update: (id: number, payload: StoragePayload) => request<Storage>('PUT', `/storage/${id}`, payload),
     remove: (id: number) => request<void>('DELETE', `/storage/${id}`),
     check: (id: number) => request<{ status: string }>('POST', `/storage/${id}/check`),
+    // restauration REELLE du dernier snapshot dans un volume jetable : la
+    // seule preuve qu'une sauvegarde est restaurable
+    verify: (id: number) => request<{ status: string }>('POST', `/storage/${id}/verify`),
     // interroge les deux depots de chaque paire : action a la demande, pas un
     // rafraichissement de fond
     replication: () =>

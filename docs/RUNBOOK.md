@@ -159,6 +159,27 @@ curl -s -H "Authorization: Bearer $JWT" \
 3. Tant que la cause n'est pas traitée : **ne pas supprimer le conteneur ni le
    volume source**. Ce sont les seules données dont on est certain.
 
+#### Déclencher une vérification sans attendre la passe
+
+Un dépôt neuf n'a aucune preuve de restaurabilité avant sa première passe
+planifiée — jusqu'à une semaine avec le réglage par défaut. Et une passe qui
+vient d'échouer compte comme passée : la suivante est à un intervalle complet.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $JWT" \
+  http://127.0.0.1:8080/api/v1/storage/<id>/verify        # 202
+```
+
+Bouton **« Prouver la restauration »** sur la page Stockage. À ne pas confondre
+avec **« Contrôler »** (`/check`) : le premier restaure réellement le dernier
+snapshot dans un volume jetable et recompare les empreintes, le second valide
+la structure du dépôt et relit une fraction des données. Seul le premier prouve
+qu'une sauvegarde se matérialise.
+
+Le résultat part dans le flux d'événements et l'historique des restaurations
+(`system:verification`). Un dépôt vide n'est pas un échec : il n'y a rien à
+prouver.
+
 #### Vérifier qu'une passe périodique s'arme réellement
 
 Chaque boucle (vérification, contrôle d'intégrité, réconciliation) annonce au

@@ -161,6 +161,56 @@ func (s *Server) handleReplicate(c *gin.Context) {
 	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
 }
 
+// handleVerifyStorage : restauration de VÉRIFICATION à la demande.
+//
+// Symétrique de /check, mais ce n'est pas la même preuve : `restic check`
+// valide la structure du dépôt, la vérification extrait réellement le dernier
+// snapshot dans un volume jetable et recompare les empreintes. Sans cette
+// route, la seule façon d'obtenir cette preuve était d'attendre la passe
+// planifiée — jusqu'à SDB_VERIFY_INTERVAL, soit une semaine par défaut après
+// un dépôt fraîchement créé.
+func (s *Server) handleVerifyStorage(c *gin.Context) {
+	id, err := pathID(c)
+	if err != nil {
+		s.respondError(c, err)
+		return
+	}
+	// existence vérifiée avant d'accepter le job : un 202 sur un dépôt
+	// inexistant serait un faux acquittement
+	if _, err := s.svc.Storages.Get(c.Request.Context(), id); err != nil {
+		s.respondError(c, err)
+		return
+	}
+	go func() {
+		verifyCtx, cancel := context.WithTimeout(context.Background(), 24*time.Hour)
+		defer cancel()
+		rec, err := s.svc.Verification.VerifyStorage(verifyCtx, id)
+		switch {
+		case err != nil:
+			s.logger.Error("on-demand verification failed", "storage_id", id, "error", err)
+			s.hub.Publish(domain.ProgressEvent{
+				Type:    domain.EventError,
+				Time:    time.Now().UTC(),
+				Message: fmt.Sprintf("verification of storage %d failed: %v", id, err),
+			})
+		case rec == nil:
+			// dépôt vide : rien à prouver, et surtout pas un échec
+			s.hub.Publish(domain.ProgressEvent{
+				Type:    domain.EventLog,
+				Time:    time.Now().UTC(),
+				Message: fmt.Sprintf("verification of storage %d skipped: repository has no snapshot", id),
+			})
+		default:
+			s.hub.Publish(domain.ProgressEvent{
+				Type:    domain.EventLog,
+				Time:    time.Now().UTC(),
+				Message: fmt.Sprintf("storage %d is provably restorable (restore #%d)", id, rec.ID),
+			})
+		}
+	}()
+	c.JSON(http.StatusAccepted, gin.H{"status": "accepted"})
+}
+
 // handleCheckStorage : restic check peut durer des minutes → exécution en
 // arrière-plan, résultat via le flux d'événements et les logs (202).
 func (s *Server) handleCheckStorage(c *gin.Context) {

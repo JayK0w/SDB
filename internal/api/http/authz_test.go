@@ -148,6 +148,34 @@ func TestRestoreEndpointsRequireAdmin(t *testing.T) {
 	}
 }
 
+// Les opérations lourdes sur un dépôt coûtent des I/O et de la bande passante,
+// et la vérification écrit un volume jetable : elles restent fermées au rôle
+// `user`, comme la gestion des dépôts elle-même.
+func TestStorageOperationsRequireAdmin(t *testing.T) {
+	s, _ := testServer(t)
+	userTok := tokenFor(t, s, domain.RoleUser)
+
+	cases := []struct {
+		method, path string
+	}{
+		{http.MethodPost, "/api/v1/storage/1/check"},
+		{http.MethodPost, "/api/v1/storage/1/verify"},
+		{http.MethodPost, "/api/v1/storage/1/replicate"},
+		{http.MethodDelete, "/api/v1/storage/1"},
+	}
+	for _, tc := range cases {
+		if w := do(s, tc.method, tc.path, userTok, ""); w.Code != http.StatusForbidden {
+			t.Fatalf("%s %s as user -> %d, want 403", tc.method, tc.path, w.Code)
+		}
+	}
+	// et rien de tout ça n'est ouvert à un anonyme
+	for _, tc := range cases {
+		if w := do(s, tc.method, tc.path, "", ""); w.Code != http.StatusUnauthorized {
+			t.Fatalf("%s %s anonymous -> %d, want 401", tc.method, tc.path, w.Code)
+		}
+	}
+}
+
 // La lecture de l'historique reste ouverte : restreindre l'écriture ne doit
 // pas aveugler les comptes non-admin.
 func TestRestoreHistoryStaysReadableByUsers(t *testing.T) {

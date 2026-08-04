@@ -271,6 +271,7 @@ over the WebSocket.
 | POST/PUT/DELETE | `/storage[/:id]` | admin | Manage storage targets |
 | GET | `/storage/:id/snapshots` | user | List Restic snapshots (`?tag=`) |
 | POST | `/storage/:id/check` | admin | Integrity check → 202 |
+| POST | `/storage/:id/verify` | admin | Verification restore — really extracts the newest snapshot into a throwaway volume → 202 |
 | GET | `/replication` | user | Replication gap of every secondary copy (measured in both repositories) |
 | POST | `/storage/:id/replicate` | admin | Copy everything missing to that secondary copy → 202 |
 | POST | `/backups` | user | Start a backup → 202 + record |

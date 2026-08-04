@@ -30,13 +30,14 @@ type Options struct {
 
 // Services : usecases exposés par la couche de livraison.
 type Services struct {
-	Auth        *usecase.AuthService
-	Containers  *usecase.ContainerService
-	Storages    *usecase.StorageService
-	Backups     *usecase.BackupService
-	Restores    *usecase.RestoreService
-	Scheduler   *usecase.SchedulerService
-	Replication *usecase.ReplicationService
+	Auth         *usecase.AuthService
+	Containers   *usecase.ContainerService
+	Storages     *usecase.StorageService
+	Backups      *usecase.BackupService
+	Restores     *usecase.RestoreService
+	Scheduler    *usecase.SchedulerService
+	Replication  *usecase.ReplicationService
+	Verification *usecase.VerificationService
 }
 
 type Server struct {
@@ -135,6 +136,9 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 			admin.PUT("/storage/:id", s.handleUpdateStorage)
 			admin.DELETE("/storage/:id", s.handleDeleteStorage)
 			admin.POST("/storage/:id/check", s.handleCheckStorage)
+			// une vérification écrit un volume jetable et relit tout le
+			// snapshot : coûteuse en I/O, réservée aux admins
+			admin.POST("/storage/:id/verify", s.handleVerifyStorage)
 			// une copie complète consomme la bande passante des deux dépôts :
 			// déclenchement réservé aux admins
 			admin.POST("/storage/:id/replicate", s.handleReplicate)
