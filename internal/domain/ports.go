@@ -41,6 +41,11 @@ type BackupHistoryRepository interface {
 	// FailInterrupted : au démarrage, bascule en failed les runs restés
 	// pending/running après un crash.
 	FailInterrupted(ctx context.Context, reason string) (int64, error)
+	// LastSuccessByContainer : date de la dernière sauvegarde exploitable par
+	// conteneur (succès ou avertissement — un avertissement a bien produit un
+	// snapshot). Sert à réamorcer la fraîcheur au démarrage : les jauges vivent
+	// en mémoire du processus, la base sait depuis quand.
+	LastSuccessByContainer(ctx context.Context) (map[string]time.Time, error)
 }
 
 type RestoreHistoryRepository interface {
@@ -49,7 +54,15 @@ type RestoreHistoryRepository interface {
 	GetByID(ctx context.Context, id int64) (*RestoreRecord, error)
 	List(ctx context.Context, filter RestoreFilter) ([]RestoreRecord, error)
 	FailInterrupted(ctx context.Context, reason string) (int64, error)
+	// LastVerificationByStorage : date de la dernière restauration de
+	// VÉRIFICATION réussie, par dépôt. Une restauration ordinaire ne prouve
+	// rien de périodique : seules celles attribuées au vérificateur comptent.
+	LastVerificationByStorage(ctx context.Context) (map[int64]time.Time, error)
 }
+
+// VerificationActor : acteur des restaurations de vérification. Constante
+// partagée : le usecase l'écrit, la persistance la filtre.
+const VerificationActor = "system:verification"
 
 // MaintenanceStateRepository : date du dernier passage des boucles
 // périodiques (vérification, contrôle d'intégrité, réconciliation).

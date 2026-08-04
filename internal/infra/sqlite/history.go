@@ -45,6 +45,35 @@ func (r *HistoryRepo) Create(ctx context.Context, rec *domain.BackupRecord) erro
 	return nil
 }
 
+// LastSuccessByContainer : un seul GROUP BY plutôt qu'un listing complet —
+// appelé au démarrage, il n'a aucune raison de charger tout l'historique.
+// `warning` compte comme exploitable : le snapshot existe (c'est la copie
+// secondaire ou la rétention qui a raté), et l'exclure ferait passer un
+// conteneur pour non sauvegardé.
+func (r *HistoryRepo) LastSuccessByContainer(ctx context.Context) (map[string]time.Time, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT container_name, MAX(start_time) FROM backups_history
+		 WHERE status IN (?, ?) AND container_name <> ''
+		 GROUP BY container_name`,
+		string(domain.BackupSuccess), string(domain.BackupWarning))
+	if err != nil {
+		return nil, fmt.Errorf("reading last successful backups: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var name, at string
+		if err := rows.Scan(&name, &at); err != nil {
+			return nil, err
+		}
+		if t := parseTime(at); !t.IsZero() {
+			out[name] = t
+		}
+	}
+	return out, rows.Err()
+}
+
 func (r *HistoryRepo) Update(ctx context.Context, rec *domain.BackupRecord) error {
 	res, err := r.db.ExecContext(ctx,
 		`UPDATE backups_history

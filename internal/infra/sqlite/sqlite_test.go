@@ -248,6 +248,72 @@ func TestMaintenanceRepoRemembersLastRun(t *testing.T) {
 	}
 }
 
+// Les requêtes qui réamorcent les jauges de fraîcheur au démarrage : un seul
+// GROUP BY, la plus récente par clé, et surtout le bon filtre — un run échoué
+// ou une restauration humaine ne doivent pas passer pour une preuve.
+func TestFreshnessQueries(t *testing.T) {
+	ctx := context.Background()
+	db := openTestDB(t)
+	storages := sqlite.NewStorageRepo(db, testCipher(t))
+	history := sqlite.NewHistoryRepo(db)
+	restores := sqlite.NewRestoreRepo(db)
+
+	cfg := &domain.StorageConfig{Name: "local", Type: domain.StorageLocal, Endpoint: "/b", ResticPassword: "pw"}
+	if err := storages.Create(ctx, cfg); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	older, recent := now.Add(-48*time.Hour), now.Add(-2*time.Hour)
+
+	for _, rec := range []*domain.BackupRecord{
+		{ContainerName: "web", ContainerID: "c1", StorageID: cfg.ID, Status: domain.BackupSuccess, StartTime: older},
+		{ContainerName: "web", ContainerID: "c1", StorageID: cfg.ID, Status: domain.BackupSuccess, StartTime: recent},
+		{ContainerName: "warned", ContainerID: "c2", StorageID: cfg.ID, Status: domain.BackupWarning, StartTime: recent},
+		{ContainerName: "broken", ContainerID: "c3", StorageID: cfg.ID, Status: domain.BackupFailed, StartTime: now},
+	} {
+		if err := history.Create(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	backups, err := history.LastSuccessByContainer(ctx)
+	if err != nil {
+		t.Fatalf("LastSuccessByContainer() error: %v", err)
+	}
+	if got := backups["web"]; !got.Equal(recent) {
+		t.Fatalf("web = %s, want la plus récente %s", got, recent)
+	}
+	if _, ok := backups["warned"]; !ok {
+		t.Fatal("un avertissement a produit un snapshot : il doit compter")
+	}
+	if _, ok := backups["broken"]; ok {
+		t.Fatal("un conteneur dont tout a échoué ne doit pas apparaître")
+	}
+
+	for _, rec := range []*domain.RestoreRecord{
+		{StorageID: cfg.ID, SnapshotID: "s", TargetVolume: "v", Status: domain.BackupSuccess, StartTime: older,
+			TriggeredBy: domain.Actor{Name: domain.VerificationActor}},
+		{StorageID: cfg.ID, SnapshotID: "s", TargetVolume: "v", Status: domain.BackupSuccess, StartTime: recent,
+			TriggeredBy: domain.Actor{Name: domain.VerificationActor}},
+		{StorageID: cfg.ID, SnapshotID: "s", TargetVolume: "v", Status: domain.BackupSuccess, StartTime: now,
+			TriggeredBy: domain.Actor{UserID: 1, Name: "admin"}},
+		{StorageID: cfg.ID, SnapshotID: "s", TargetVolume: "v", Status: domain.BackupFailed, StartTime: now,
+			TriggeredBy: domain.Actor{Name: domain.VerificationActor}},
+	} {
+		if err := restores.Create(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	verifications, err := restores.LastVerificationByStorage(ctx)
+	if err != nil {
+		t.Fatalf("LastVerificationByStorage() error: %v", err)
+	}
+	if got := verifications[cfg.ID]; !got.Equal(recent) {
+		t.Fatalf("dernière vérification = %s, want %s — une restauration humaine ou échouée a-t-elle compté ?", got, recent)
+	}
+}
+
 // cipherWith : Cipher sur une clé maître donnée, pour les tests de rotation.
 func cipherWith(t *testing.T, key string) domain.Cipher {
 	t.Helper()

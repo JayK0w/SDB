@@ -121,8 +121,10 @@ func (s *VerificationService) VerifyStorage(ctx context.Context, storageID int64
 		SourceVolume: source,
 		TargetVolume: scratch,
 		Status:       domain.BackupPending,
-		TriggeredBy:  domain.SystemActor("verification"),
-		StartTime:    time.Now().UTC(),
+		// domain.VerificationActor : c'est cette valeur que la persistance
+		// filtre pour retrouver la dernière preuve de restaurabilité
+		TriggeredBy: domain.Actor{Name: domain.VerificationActor},
+		StartTime:   time.Now().UTC(),
 	}
 	if err := s.history.Create(ctx, rec); err != nil {
 		return nil, fmt.Errorf("recording verification run: %w", err)

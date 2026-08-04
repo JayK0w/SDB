@@ -171,6 +171,17 @@ func run() error {
 		logger.Warn("no alert webhook configured; backup failures are only visible in /metrics and logs")
 	}
 
+	// Les jauges de fraicheur vivent en memoire : sans reamorcage, chaque
+	// redemarrage fait disparaitre "derniere sauvegarde reussie" et "derniere
+	// preuve de restaurabilite", et les alertes baties dessus deviennent
+	// fausses. Un echec ici n'empeche pas de demarrer : on retombe simplement
+	// sur le remplissage au premier evenement.
+	if n, err := usecase.SeedFreshness(ctx, history, restoreHistory, storageRepo, collector); err != nil {
+		logger.Error("could not seed freshness metrics from the database", "error", err, "seeded", n)
+	} else if n > 0 {
+		logger.Info("freshness metrics seeded from the database", "series", n)
+	}
+
 	// copie secondaire (3-2-1) : le dépôt principal est un support unique tant
 	// qu'aucun autre ne porte les mêmes snapshots
 	replicationSvc := usecase.NewReplicationService(engine, storageRepo, publisher, logger,

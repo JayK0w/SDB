@@ -62,6 +62,34 @@ func (r *RestoreRepo) GetByID(ctx context.Context, id int64) (*domain.RestoreRec
 	return scanRestore(row)
 }
 
+// LastVerificationByStorage : dernière PREUVE de restaurabilité par dépôt.
+// Filtre sur l'acteur : une restauration lancée par un humain répond à un
+// besoin ponctuel, elle ne dit rien de la fraîcheur du contrôle périodique.
+func (r *RestoreRepo) LastVerificationByStorage(ctx context.Context) (map[int64]time.Time, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT storage_id, MAX(start_time) FROM restores_history
+		 WHERE status = ? AND triggered_by = ?
+		 GROUP BY storage_id`,
+		string(domain.BackupSuccess), domain.VerificationActor)
+	if err != nil {
+		return nil, fmt.Errorf("reading last verification restores: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[int64]time.Time{}
+	for rows.Next() {
+		var id int64
+		var at string
+		if err := rows.Scan(&id, &at); err != nil {
+			return nil, err
+		}
+		if t := parseTime(at); !t.IsZero() {
+			out[id] = t
+		}
+	}
+	return out, rows.Err()
+}
+
 func (r *RestoreRepo) List(ctx context.Context, filter domain.RestoreFilter) ([]domain.RestoreRecord, error) {
 	query := `SELECT ` + restoreColumns + ` FROM restores_history`
 	var conds []string

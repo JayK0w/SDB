@@ -185,6 +185,14 @@ The two numbers an auditor asks for are **measured, not declared**:
   announced recovery time. Without `SDB_VERIFY_INTERVAL` there is no
   measurement, and an RTO without a measurement is a promise.
 
+Both gauges are **re-seeded from the database on startup**. Prometheus gauges
+live in process memory: without seeding, every restart makes
+"last successful backup" and "last proof of restorability" vanish, and an alert
+built on `absent(...)` fires while nothing has happened. Counters are
+deliberately *not* seeded — a counter restarting at zero is something
+`rate()`/`increase()` handle, whereas one seeded to an arbitrary value makes
+them lie.
+
 Ready-to-load Prometheus rules are in
 [deploy/prometheus/sdb-alerts.yml](deploy/prometheus/sdb-alerts.yml). They
 cover the four ways to lose coverage without ever seeing a red run: nothing

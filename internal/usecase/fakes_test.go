@@ -339,6 +339,26 @@ func (m *memHistory) List(context.Context, domain.HistoryFilter) ([]domain.Backu
 
 func (m *memHistory) FailInterrupted(context.Context, string) (int64, error) { return 0, nil }
 
+// LastSuccessByContainer : meme regle que la persistance reelle — `warning`
+// compte comme exploitable, le snapshot existe.
+func (m *memHistory) LastSuccessByContainer(context.Context) (map[string]time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]time.Time{}
+	for _, rec := range m.recs {
+		if rec.Status != domain.BackupSuccess && rec.Status != domain.BackupWarning {
+			continue
+		}
+		if rec.ContainerName == "" {
+			continue
+		}
+		if at, ok := out[rec.ContainerName]; !ok || rec.StartTime.After(at) {
+			out[rec.ContainerName] = rec.StartTime
+		}
+	}
+	return out, nil
+}
+
 // ---------------------------------------------------------------------------
 // fake domain.StorageRepository
 // ---------------------------------------------------------------------------
@@ -454,6 +474,23 @@ func (m *memRestores) List(context.Context, domain.RestoreFilter) ([]domain.Rest
 }
 
 func (m *memRestores) FailInterrupted(context.Context, string) (int64, error) { return 0, nil }
+
+// LastVerificationByStorage : seules les restaurations du VERIFICATEUR
+// comptent — une restauration humaine ne dit rien du controle periodique.
+func (m *memRestores) LastVerificationByStorage(context.Context) (map[int64]time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[int64]time.Time{}
+	for _, rec := range m.recs {
+		if rec.Status != domain.BackupSuccess || rec.TriggeredBy.Name != domain.VerificationActor {
+			continue
+		}
+		if at, ok := out[rec.StorageID]; !ok || rec.StartTime.After(at) {
+			out[rec.StorageID] = rec.StartTime
+		}
+	}
+	return out, nil
+}
 
 // ---------------------------------------------------------------------------
 // fake domain.ScheduleRepository

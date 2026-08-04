@@ -5,6 +5,7 @@ package metrics
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
@@ -149,6 +150,24 @@ func (c *Collector) Handler() http.Handler {
 func (c *Collector) RecordReplication(copyName, sourceName string, pending int, lagSeconds float64) {
 	c.replicationPending.WithLabelValues(copyName, sourceName).Set(float64(pending))
 	c.replicationLag.WithLabelValues(copyName, sourceName).Set(lagSeconds)
+}
+
+// SeedLastBackupSuccess / SeedLastVerificationSuccess : reamorcage au
+// demarrage depuis la base. Les jauges de fraicheur vivent en memoire : sans
+// ca, chaque redemarrage fait disparaitre la serie et une alerte batie dessus
+// devient fausse dans un sens ou dans l'autre.
+func (c *Collector) SeedLastBackupSuccess(container string, at time.Time) {
+	if container == "" || at.IsZero() {
+		return
+	}
+	c.lastSuccess.WithLabelValues(container).Set(float64(at.Unix()))
+}
+
+func (c *Collector) SeedLastVerificationSuccess(storage string, at time.Time) {
+	if storage == "" || at.IsZero() {
+		return
+	}
+	c.verifyLastSuccess.WithLabelValues(storage).Set(float64(at.Unix()))
 }
 
 // RecordVerification : resultat d'une restauration de verification. La duree

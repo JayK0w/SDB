@@ -87,7 +87,7 @@ promesse. Idem pour `SDB_ALERT_WEBHOOK` et le RPO.
 | SDB est à l'arrêt | Aucune sauvegarde. Pas de haute disponibilité, rien ne prend le relais. |
 | Le conteneur source est arrêté au moment de la fenêtre | La sauvegarde tourne quand même (volumes montés en lecture seule). |
 | L'hôte Docker est perdu | Les dépôts `local` partent avec lui : c'est le rôle de la copie secondaire hors-site. |
-| SDB est redémarré souvent | Sans effet sur les passes périodiques : leur échéance est **persistée** et reprend là où elle en était. Une passe déjà due repart quelques minutes après le démarrage. |
+| SDB est redémarré souvent | Sans effet sur les passes périodiques : leur échéance est **persistée** et reprend là où elle en était. Une passe déjà due repart quelques minutes après le démarrage. Les jauges de fraîcheur sont réamorcées depuis la base ; les compteurs de runs, eux, repartent de zéro — normal pour Prometheus, `increase()` le gère. |
 | La retention a purgé les snapshots | `keep_last` s'applique au dépôt principal ; le dépôt de copie, lui, n'est jamais purgé par SDB s'il est `append_only`. |
 
 ---
