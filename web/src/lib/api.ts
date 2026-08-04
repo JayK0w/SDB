@@ -4,6 +4,7 @@ import type {
   Container,
   Health,
   LoginResponse,
+  ProbeResult,
   Replication,
   RestorePayload,
   RestoreRecord,
@@ -96,6 +97,10 @@ export const api = {
   storage: {
     list: () => request<Storage[]>('GET', '/storage'),
     create: (payload: StoragePayload) => request<StorageCreated>('POST', '/storage', payload),
+    // eprouve une cible SANS rien persister, avant de la creer. Synchrone :
+    // la sonde travaille sur un depot qu'elle vient de creer et qui contient
+    // un seul fichier, la reponse arrive en quelques secondes.
+    test: (payload: StoragePayload) => request<ProbeResult>('POST', '/storage/test', payload),
     update: (id: number, payload: StoragePayload) => request<Storage>('PUT', `/storage/${id}`, payload),
     remove: (id: number) => request<void>('DELETE', `/storage/${id}`),
     check: (id: number) => request<{ status: string }>('POST', `/storage/${id}/check`),

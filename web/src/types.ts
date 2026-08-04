@@ -210,6 +210,29 @@ export interface StorageCreated extends Storage {
   restic_password_warning: string
 }
 
+/** Une capacite eprouvee par la sonde de cible. */
+export interface ProbeStep {
+  name: string
+  ok: boolean
+  error?: string
+}
+
+/**
+ * Compte rendu d'un test de cible (POST /storage/test), rendu SANS rien
+ * persister. La sonde exerce lister, ecrire, relire et SUPPRIMER : la creation
+ * ne teste que les deux premiers, une cle sans droit de suppression passe donc
+ * la creation et ne casse qu'a la premiere purge.
+ */
+export interface ProbeResult {
+  ok: boolean
+  /** premiere etape en echec ; les suivantes n'ont pas ete tentees */
+  failed_step?: string
+  steps: ProbeStep[]
+  /** chemin du depot de sonde laisse dans la cible ; absent si rien n'a ete cree */
+  residue?: string
+  residue_note?: string
+}
+
 export interface ProgressEvent {
   backup_id?: number
   restore_id?: number
