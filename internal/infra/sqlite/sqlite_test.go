@@ -208,6 +208,46 @@ func TestStorageRepoRejectsCopyOfMissingStorage(t *testing.T) {
 	}
 }
 
+// L'échéance des passes périodiques doit survivre au redémarrage : c'est tout
+// l'objet de cette table. « Jamais exécutée » doit se distinguer d'une erreur
+// de lecture, sinon une base illisible passerait pour une tâche à lancer.
+func TestMaintenanceRepoRemembersLastRun(t *testing.T) {
+	ctx := context.Background()
+	repo := sqlite.NewMaintenanceRepo(openTestDB(t))
+
+	got, err := repo.LastRun(ctx, "verification")
+	if err != nil {
+		t.Fatalf("LastRun(jamais exécutée) error: %v", err)
+	}
+	if !got.IsZero() {
+		t.Fatalf("LastRun = %s, want zéro pour une tâche jamais exécutée", got)
+	}
+
+	at := time.Now().UTC().Truncate(time.Millisecond)
+	if err := repo.MarkRun(ctx, "verification", at); err != nil {
+		t.Fatalf("MarkRun() error: %v", err)
+	}
+	got, err = repo.LastRun(ctx, "verification")
+	if err != nil || !got.Equal(at) {
+		t.Fatalf("LastRun = %s, %v; want %s", got, err, at)
+	}
+
+	// deuxième passage : la ligne est mise à jour, pas dupliquée
+	later := at.Add(time.Hour)
+	if err := repo.MarkRun(ctx, "verification", later); err != nil {
+		t.Fatalf("MarkRun(second) error: %v", err)
+	}
+	got, _ = repo.LastRun(ctx, "verification")
+	if !got.Equal(later) {
+		t.Fatalf("LastRun = %s, want %s", got, later)
+	}
+
+	// les tâches ne se marchent pas dessus
+	if other, _ := repo.LastRun(ctx, "replication"); !other.IsZero() {
+		t.Fatalf("LastRun(replication) = %s, want zéro", other)
+	}
+}
+
 // cipherWith : Cipher sur une clé maître donnée, pour les tests de rotation.
 func cipherWith(t *testing.T, key string) domain.Cipher {
 	t.Helper()

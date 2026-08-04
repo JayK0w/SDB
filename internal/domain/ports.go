@@ -51,6 +51,19 @@ type RestoreHistoryRepository interface {
 	FailInterrupted(ctx context.Context, reason string) (int64, error)
 }
 
+// MaintenanceStateRepository : date du dernier passage des boucles
+// périodiques (vérification, contrôle d'intégrité, réconciliation).
+//
+// Sans persistance, une échéance repart de zéro à CHAQUE démarrage : sur une
+// instance redémarrée plus souvent que l'intervalle, la passe ne s'exécute
+// jamais — et une garantie qui ne s'arme jamais ne se distingue pas, dans les
+// logs, d'une garantie qui va bien.
+type MaintenanceStateRepository interface {
+	// LastRun : zéro si la tâche n'a jamais tourné.
+	LastRun(ctx context.Context, task string) (time.Time, error)
+	MarkRun(ctx context.Context, task string, at time.Time) error
+}
+
 type ScheduleRepository interface {
 	Create(ctx context.Context, s *BackupSchedule) error
 	GetByID(ctx context.Context, id int64) (*BackupSchedule, error)

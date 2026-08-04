@@ -87,6 +87,7 @@ promesse. Idem pour `SDB_ALERT_WEBHOOK` et le RPO.
 | SDB est à l'arrêt | Aucune sauvegarde. Pas de haute disponibilité, rien ne prend le relais. |
 | Le conteneur source est arrêté au moment de la fenêtre | La sauvegarde tourne quand même (volumes montés en lecture seule). |
 | L'hôte Docker est perdu | Les dépôts `local` partent avec lui : c'est le rôle de la copie secondaire hors-site. |
+| SDB est redémarré souvent | Sans effet sur les passes périodiques : leur échéance est **persistée** et reprend là où elle en était. Une passe déjà due repart quelques minutes après le démarrage. |
 | La retention a purgé les snapshots | `keep_last` s'applique au dépôt principal ; le dépôt de copie, lui, n'est jamais purgé par SDB s'il est `append_only`. |
 
 ---
@@ -157,6 +158,27 @@ curl -s -H "Authorization: Bearer $JWT" \
 
 3. Tant que la cause n'est pas traitée : **ne pas supprimer le conteneur ni le
    volume source**. Ce sont les seules données dont on est certain.
+
+#### Vérifier qu'une passe périodique s'arme réellement
+
+Chaque boucle (vérification, contrôle d'intégrité, réconciliation) annonce au
+démarrage son échéance, calculée depuis son **dernier passage** et non depuis
+le boot :
+
+```bash
+docker compose logs sdb | grep 'periodic task armed'
+# task=verification interval=168h0m0s first_pass_in=163h12m0s
+```
+
+`first_pass_in` égal à l'intervalle complet à chaque redémarrage signalerait
+que l'échéance ne se souvient de rien. Les dates brutes se lisent dans la
+table `maintenance_runs` :
+
+```bash
+VOL=$(docker volume ls -q -f name=sdb-data | head -1)
+docker run --rm -v "$VOL:/data:ro" alpine:3 sh -c \
+  'apk add --no-cache sqlite >/dev/null; sqlite3 "file:/data/sdb.db?mode=ro" "SELECT * FROM maintenance_runs;"'
+```
 
 ### Le dépôt est corrompu
 

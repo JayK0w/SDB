@@ -202,26 +202,9 @@ func (s *VerificationService) VerifyAll(ctx context.Context) error {
 	return errors.Join(failures...)
 }
 
-// Schedule : boucle de vérification. Premier passage après un intervalle
-// complet — au démarrage, l'hôte a mieux à faire que relire un dépôt.
-func (s *VerificationService) Schedule(ctx context.Context, every time.Duration) {
-	if every <= 0 {
-		return
-	}
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-	s.logger.Info("restore verification enabled", "interval", every.String())
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.VerifyAll(ctx); err != nil {
-				s.logger.Error("verification pass finished with failures", "error", err)
-			}
-		}
-	}
-}
+// La planification vit dans MaintenanceScheduler (cf. TaskVerification) : sans
+// échéance persistée, une instance redémarrée chaque semaine ne vérifiait
+// jamais rien.
 
 func (s *VerificationService) transition(ctx context.Context, rec *domain.RestoreRecord, status domain.BackupStatus, msg string) {
 	rec.Status = status

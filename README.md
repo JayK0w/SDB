@@ -96,6 +96,15 @@ real restore does, so `SDB_VERIFY_INTERVAL` extracts the newest snapshot of
 each repository into a throwaway volume with `--verify` (restic recomputes
 every written file's hash against the snapshot) and then destroys the volume.
 
+**The deadline is persisted, not restarted.** Each periodic pass (verification,
+integrity check, replication reconciliation) records when it last ran, and on
+startup schedules itself from *that* date. Waiting a full interval after every
+boot — the previous behaviour — meant an instance restarted more often than the
+interval never ran the pass at all: one weekly update with
+`SDB_VERIFY_INTERVAL=168h` is enough, and nothing in the logs distinguished a
+guarantee that never armed from one that was fine. An overdue pass now runs a
+few minutes after startup and says so.
+
 The run is recorded in the restore history as `system:verification`, so a
 failure travels through the same alert path as any other failed job. Volume
 deletion is guarded twice — the usecase only ever targets `sdb-verify-*`

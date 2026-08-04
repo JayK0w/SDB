@@ -141,10 +141,14 @@ func run() error {
 		}
 	}
 
+	// Planificateur des boucles periodiques : l'echeance est PERSISTEE, donc
+	// elle survit aux redemarrages. Sans ca, une instance redemarree plus
+	// souvent que l'intervalle ne verifiait, ne controlait et ne repliquait
+	// jamais rien -- en silence.
+	periodic := usecase.NewMaintenanceScheduler(sqlite.NewMaintenanceRepo(db), logger)
+
 	maintenance := usecase.NewMaintenanceService(storageRepo, engine, logger)
-	if cfg.Maintenance.CheckInterval > 0 {
-		go maintenance.Schedule(ctx, cfg.Maintenance.CheckInterval)
-	}
+	go periodic.Run(ctx, usecase.TaskIntegrityCheck, cfg.Maintenance.CheckInterval, maintenance.RunChecks)
 
 	// hub (WebSocket) + collecteur Prometheus alimentés par le même flux
 	hub := httpapi.NewHub(logger)
@@ -189,15 +193,13 @@ func run() error {
 			collector.RecordVerification(res.StorageName, res.Duration.Seconds(), res.Succeeded)
 		}))
 	if cfg.Maintenance.VerifyInterval > 0 {
-		go verifySvc.Schedule(ctx, cfg.Maintenance.VerifyInterval)
+		go periodic.Run(ctx, usecase.TaskVerification, cfg.Maintenance.VerifyInterval, verifySvc.VerifyAll)
 	} else {
 		logger.Warn("restore verification disabled; nothing proves the backups are restorable (set SDB_VERIFY_INTERVAL)")
 	}
 	// une copie n'est prouvée que mesurée : la passe compare les snapshots des
 	// deux dépôts et alimente sdb_replication_pending_snapshots
-	if cfg.Maintenance.ReplicationInterval > 0 {
-		go replicationSvc.Schedule(ctx, cfg.Maintenance.ReplicationInterval)
-	}
+	go periodic.Run(ctx, usecase.TaskReplication, cfg.Maintenance.ReplicationInterval, replicationSvc.ReplicateAll)
 	switch pairs, err := replicationSvc.Configured(ctx); {
 	case err != nil:
 		logger.Error("could not determine secondary copy configuration", "error", err)

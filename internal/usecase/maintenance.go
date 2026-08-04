@@ -47,23 +47,5 @@ func (s *MaintenanceService) RunChecks(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// Schedule : RunChecks toutes les interval jusqu'à annulation du contexte.
-// Premier passage après un intervalle complet (pas de scan à chaque boot).
-func (s *MaintenanceService) Schedule(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		return
-	}
-	s.logger.Info("scheduled integrity checks enabled", "interval", interval.String())
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.RunChecks(ctx); err != nil {
-				s.logger.Error("scheduled integrity checks reported problems", "error", err)
-			}
-		}
-	}
-}
+// La planification vit dans MaintenanceScheduler : l'échéance doit survivre
+// aux redémarrages, et une seule mécanique la porte pour les trois boucles.

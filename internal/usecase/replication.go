@@ -274,26 +274,7 @@ func (s *ReplicationService) ReplicateAfterBackup(ctx context.Context, sourceID,
 	return errors.Join(failures...)
 }
 
-// Schedule : passe de réconciliation périodique. Premier passage après un
-// intervalle complet — au démarrage, la copie inline vient de faire le travail.
-func (s *ReplicationService) Schedule(ctx context.Context, every time.Duration) {
-	if every <= 0 {
-		return
-	}
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-	s.logger.Info("secondary copy reconciliation enabled", "interval", every.String())
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			if err := s.ReplicateAll(ctx); err != nil {
-				s.logger.Error("replication pass finished with failures", "error", err)
-			}
-		}
-	}
-}
+// La planification vit dans MaintenanceScheduler (cf. TaskReplication).
 
 // copySnapshots : exécute la copie, événements relayés au publisher. Les
 // événements portent l'ID de la sauvegarde quand la copie suit un run, pour
