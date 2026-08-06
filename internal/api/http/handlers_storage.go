@@ -259,8 +259,9 @@ func (s *Server) handleCheckStorage(c *gin.Context) {
 	go func() {
 		checkCtx, cancel := context.WithTimeout(context.Background(), time.Hour)
 		defer cancel()
+		// le service journalise début, succès et échec (avec le NOM du dépôt,
+		// pas son identifiant) : re-journaliser ici doublerait chaque échec
 		if err := s.svc.Storages.CheckIntegrity(checkCtx, id); err != nil {
-			s.logger.Error("on-demand integrity check failed", "storage_id", id, "error", err)
 			s.hub.Publish(domain.ProgressEvent{
 				Type:    domain.EventError,
 				Time:    time.Now().UTC(),

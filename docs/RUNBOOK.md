@@ -192,8 +192,23 @@ docker compose logs sdb | grep 'periodic task armed'
 ```
 
 `first_pass_in` égal à l'intervalle complet à chaque redémarrage signalerait
-que l'échéance ne se souvient de rien. Les dates brutes se lisent dans la
-table `maintenance_runs` :
+que l'échéance ne se souvient de rien.
+
+Pour distinguer ce qu'une passe a réellement fait d'un contrôle déclenché à la
+main, les lignes portent un attribut `trigger` :
+
+```bash
+docker compose logs sdb | grep 'integrity check'
+# msg="integrity check started" storage=backup-local trigger=periodic
+# msg="integrity check passed"  storage=backup-local trigger=periodic duration=4s
+```
+
+Le **succès est journalisé**, pas seulement l'échec : sans cette ligne,
+l'absence de nouvelles voudrait dire aussi bien « a réussi » que « tourne
+encore ». Un `restic check` sur un gros dépôt dure des minutes, et c'est
+exactement le moment où on se pose la question.
+
+Les dates brutes se lisent dans la table `maintenance_runs` :
 
 ```bash
 VOL=$(docker volume ls -q -f name=sdb-data | head -1)

@@ -235,12 +235,32 @@ func (s *StorageService) Snapshots(ctx context.Context, id int64, tags []string)
 	return s.engine.Snapshots(ctx, cfg, tags)
 }
 
+// CheckIntegrity : contrôle d'intégrité À LA DEMANDE.
+//
+// Journalise le début ET la fin, comme la passe périodique
+// (MaintenanceService.RunChecks). Sans la ligne de succès, « pas de nouvelles »
+// signifie aussi bien « a réussi » que « tourne encore » — et c'est
+// précisément la question que se pose l'opérateur qui vient de cliquer. Un
+// `restic check` peut durer des minutes : l'ambiguïté n'est pas théorique.
+//
+// `trigger` sépare les deux chemins. Les mêmes lignes sans lui rendraient un
+// clic d'opérateur indistinguable de la passe hebdomadaire, alors que le
+// RUNBOOK fait lire ces logs pour vérifier qu'une passe périodique s'arme
+// réellement.
 func (s *StorageService) CheckIntegrity(ctx context.Context, id int64) error {
 	cfg, err := s.storages.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.engine.Check(ctx, cfg)
+	log := s.logger.With("storage", cfg.Name, "trigger", triggerOnDemand)
+	log.Info("integrity check started")
+	start := time.Now()
+	if err := s.engine.Check(ctx, cfg); err != nil {
+		log.Error("integrity check failed", "error", err)
+		return err
+	}
+	log.Info("integrity check passed", "duration", time.Since(start).Round(time.Second).String())
+	return nil
 }
 
 // TestTarget : éprouve une configuration de cible sans RIEN écrire en base.
