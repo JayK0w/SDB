@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { api } from '@/lib/api'
-import type { Storage, StorageType } from '@/types'
+import type { ProbeResult, Storage, StorageType } from '@/types'
 import { useToastsStore } from '@/stores/toasts'
 import Modal from './Modal.vue'
 
@@ -105,7 +105,61 @@ const credentials = ref<{ key: string; value: string }[]>([])
 const submitting = ref(false)
 const error = ref('')
 
+// sonde de cible : verdict par droit, rendu sans rien persister
+const probing = ref(false)
+const probe = ref<ProbeResult | null>(null)
+
+// Ce que chaque etape prouve, dans l'ordre ou les droits cassent.
+const STEP_LABELS: Record<string, string> = {
+  'copy-pair': 'Paire copie/source compatible',
+  init: 'Lister la cible et y écrire',
+  write: 'Écrire des données, poser un verrou',
+  read: 'Relire le snapshot qui vient d’être écrit',
+  delete: 'Supprimer paquets, index et snapshot',
+}
+
+function stepLabel(name: string): string {
+  return STEP_LABELS[name] ?? name
+}
+
 const typeInfo = computed(() => TYPES.find((t) => t.value === type.value) ?? TYPES[0]!)
+
+// Un verdict ne vaut que pour la configuration qui l'a produit. Le laisser
+// affiche apres une modification ferait valider une cible que personne n'a
+// testee — exactement l'illusion de securite que cette sonde doit dissiper.
+watch([type, endpoint, copyOf, credentials], () => {
+  probe.value = null
+}, { deep: true })
+
+// payload partage par la sonde et la creation : les tester differemment
+// reviendrait a valider autre chose que ce qu'on va creer
+function payload() {
+  const creds: Record<string, string> = {}
+  for (const { key, value } of credentials.value) {
+    if (key.trim() && value !== '') creds[key.trim()] = value
+  }
+  return {
+    name: name.value,
+    type: type.value,
+    endpoint: endpoint.value,
+    credentials: creds,
+    append_only: appendOnly.value,
+    copy_of_storage_id: Number(copyOf.value) || 0,
+  }
+}
+
+async function runTest(): Promise<void> {
+  error.value = ''
+  probing.value = true
+  try {
+    probe.value = await api.storage.test(payload())
+  } catch (e) {
+    probe.value = null
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    probing.value = false
+  }
+}
 
 function onTypeChange(): void {
   credentials.value = typeInfo.value.credentials.map((c) => ({ key: c.key, value: '' }))
@@ -136,18 +190,7 @@ async function submit(): Promise<void> {
   error.value = ''
   submitting.value = true
   try {
-    const creds: Record<string, string> = {}
-    for (const { key, value } of credentials.value) {
-      if (key.trim() && value !== '') creds[key.trim()] = value
-    }
-    const created = await api.storage.create({
-      name: name.value,
-      type: type.value,
-      endpoint: endpoint.value,
-      credentials: creds,
-      append_only: appendOnly.value,
-      copy_of_storage_id: Number(copyOf.value) || 0,
-    })
+    const created = await api.storage.create(payload())
     toasts.success(`Stockage « ${created.name} » créé, dépôt restic initialisé`)
     emit('created')
     // on n'emet PAS close : le mot de passe doit etre sequestre avant
@@ -277,6 +320,41 @@ async function submit(): Promise<void> {
         </span>
       </label>
 
+      <!-- Verdict de la sonde. Rendu par DROIT, parce que la panne utile a
+           connaitre n'est pas « ca marche / ca ne marche pas » mais « lequel
+           manque » : une cle sans droit de suppression passe la creation et ne
+           casse qu'a la premiere purge, sur la copie secondaire. -->
+      <div
+        v-if="probe"
+        class="rounded-lg border px-3 py-2 text-xs"
+        :class="probe.ok
+          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-200'
+          : 'border-red-500/40 bg-red-500/10 text-red-200'"
+      >
+        <p class="mb-2 font-medium">
+          {{ probe.ok ? 'Cible éprouvée : les quatre droits sont accordés.' : 'Cible inutilisable en l’état.' }}
+        </p>
+        <ul class="space-y-1">
+          <li v-for="step in probe.steps" :key="step.name" class="flex gap-2">
+            <span aria-hidden="true">{{ step.ok ? '✓' : '✕' }}</span>
+            <span>
+              {{ stepLabel(step.name) }}
+              <span v-if="step.error" class="mt-0.5 block break-all font-mono text-[11px] opacity-90">
+                {{ step.error }}
+              </span>
+            </span>
+          </li>
+        </ul>
+        <p v-if="!probe.ok" class="mt-2 opacity-80">
+          Les étapes suivantes n'ont pas été tentées : leur absence ne dit rien sur elles.
+        </p>
+        <p v-if="probe.residue" class="mt-2 break-all opacity-80">
+          Résidu laissé dans la cible — restic ne sait pas détruire un dépôt, <code>config</code> et
+          <code>keys/</code> restent (quelques centaines d'octets) :
+          <span class="font-mono">{{ probe.residue }}</span>
+        </p>
+      </div>
+
       <p class="text-xs text-zinc-500">
         Le mot de passe du dépôt restic est généré automatiquement et stocké chiffré (AES-256-GCM).
       </p>
@@ -285,7 +363,17 @@ async function submit(): Promise<void> {
 
       <div class="flex justify-end gap-2 pt-2">
         <button type="button" class="btn btn-ghost" @click="emit('close')">Annuler</button>
-        <button type="submit" class="btn btn-primary" :disabled="submitting">
+        <!-- Eprouver AVANT de creer : la creation lance `restic init`, qui
+             n'exerce que lister et ecrire. -->
+        <button
+          type="button"
+          class="btn btn-ghost"
+          :disabled="probing || submitting || !endpoint"
+          @click="runTest"
+        >
+          {{ probing ? 'Test en cours…' : 'Tester la cible' }}
+        </button>
+        <button type="submit" class="btn btn-primary" :disabled="submitting || probing">
           {{ submitting ? 'Initialisation du dépôt…' : 'Créer' }}
         </button>
       </div>

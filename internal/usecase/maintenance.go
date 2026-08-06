@@ -10,6 +10,15 @@ import (
 	"github.com/standalone-docker-backup/sdb/internal/domain"
 )
 
+// Origine d'un contrôle d'intégrité, portée par l'attribut `trigger` de ses
+// lignes de journal. Les deux chemins produisent les mêmes messages : sans
+// cette distinction, un clic d'opérateur serait indistinguable de la passe
+// hebdomadaire dans les logs.
+const (
+	triggerPeriodic = "periodic"
+	triggerOnDemand = "on-demand"
+)
+
 // MaintenanceService : vérifications d'intégrité planifiées (restic check)
 // sur tous les stockages.
 type MaintenanceService struct {
@@ -34,7 +43,7 @@ func (s *MaintenanceService) RunChecks(ctx context.Context) error {
 	var errs []error
 	for i := range configs {
 		cfg := &configs[i]
-		log := s.logger.With("storage", cfg.Name)
+		log := s.logger.With("storage", cfg.Name, "trigger", triggerPeriodic)
 		log.Info("integrity check started")
 		start := time.Now()
 		if err := s.engine.Check(ctx, cfg); err != nil {

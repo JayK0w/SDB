@@ -321,6 +321,51 @@ func toStorageCreatedDTO(cfg domain.StorageConfig) storageCreatedDTO {
 	}
 }
 
+// probeStepDTO / probeDTO : compte rendu d un test de cible.
+//
+// Aucun secret n est ajoute ici : ni mot de passe, ni identifiants. Les
+// messages proviennent de restic et PEUVENT citer le point de terminaison,
+// qui porte des identifiants pour le backend REST (https://user:mdp@hote) --
+// c est une des raisons pour lesquelles la route est reservee aux admins.
+type probeStepDTO struct {
+	Name  string `json:"name"`
+	OK    bool   `json:"ok"`
+	Error string `json:"error,omitempty"`
+}
+
+type probeDTO struct {
+	OK bool `json:"ok"`
+	// FailedStep : ce qu il faut corriger. Les etapes suivantes n ont pas ete
+	// tentees : leur absence ne dit rien sur elles.
+	FailedStep string         `json:"failed_step,omitempty"`
+	Steps      []probeStepDTO `json:"steps"`
+	// Residue : chemin du depot de sonde laisse dans la cible, vide si la
+	// sonde n a rien pu creer.
+	Residue     string `json:"residue,omitempty"`
+	ResidueNote string `json:"residue_note,omitempty"`
+}
+
+// residueNote : restic ne sait pas detruire un depot. `forget --prune` retire
+// les paquets, les index et le snapshot ; `config` et `keys/` restent.
+const residueNote = "The probe repository was pruned but restic cannot destroy a repository: " +
+	"`config` and `keys/` remain at this path (a few hundred bytes). Delete them by hand if you care."
+
+func toProbeDTO(p *domain.TargetProbe) probeDTO {
+	out := probeDTO{
+		OK:         p.OK(),
+		FailedStep: p.FailedStep(),
+		Steps:      make([]probeStepDTO, 0, len(p.Steps)),
+		Residue:    p.Residue,
+	}
+	for _, s := range p.Steps {
+		out.Steps = append(out.Steps, probeStepDTO{Name: s.Name, OK: s.OK, Error: s.Error})
+	}
+	if p.Residue != "" {
+		out.ResidueNote = residueNote
+	}
+	return out
+}
+
 type hookDTO struct {
 	Command        []string `json:"command" binding:"required"`
 	TimeoutSeconds int      `json:"timeout_seconds"`

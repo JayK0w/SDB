@@ -235,10 +235,76 @@ func (s *StorageService) Snapshots(ctx context.Context, id int64, tags []string)
 	return s.engine.Snapshots(ctx, cfg, tags)
 }
 
+// CheckIntegrity : contrôle d'intégrité À LA DEMANDE.
+//
+// Journalise le début ET la fin, comme la passe périodique
+// (MaintenanceService.RunChecks). Sans la ligne de succès, « pas de nouvelles »
+// signifie aussi bien « a réussi » que « tourne encore » — et c'est
+// précisément la question que se pose l'opérateur qui vient de cliquer. Un
+// `restic check` peut durer des minutes : l'ambiguïté n'est pas théorique.
+//
+// `trigger` sépare les deux chemins. Les mêmes lignes sans lui rendraient un
+// clic d'opérateur indistinguable de la passe hebdomadaire, alors que le
+// RUNBOOK fait lire ces logs pour vérifier qu'une passe périodique s'arme
+// réellement.
 func (s *StorageService) CheckIntegrity(ctx context.Context, id int64) error {
 	cfg, err := s.storages.GetByID(ctx, id)
 	if err != nil {
 		return err
 	}
-	return s.engine.Check(ctx, cfg)
+	log := s.logger.With("storage", cfg.Name, "trigger", triggerOnDemand)
+	log.Info("integrity check started")
+	start := time.Now()
+	if err := s.engine.Check(ctx, cfg); err != nil {
+		log.Error("integrity check failed", "error", err)
+		return err
+	}
+	log.Info("integrity check passed", "duration", time.Since(start).Round(time.Second).String())
+	return nil
+}
+
+// TestTarget : éprouve une configuration de cible sans RIEN écrire en base.
+//
+// Une cible refusée ne laisse donc aucune trace à nettoyer, et surtout : la
+// sonde teste la SUPPRESSION, que Create ne teste jamais. Create initialise le
+// dépôt, ce qui couvre lister et écrire ; une clé en lecture seule sur la
+// suppression passe cette étape et ne casse qu'au premier retrait de verrou ou
+// à la première purge — sur le dépôt secondaire, c'est-à-dire des jours plus
+// tard et sur celui qui doit rester quand le principal a lâché.
+func (s *StorageService) TestTarget(ctx context.Context, cfg *domain.StorageConfig) (*domain.TargetProbe, error) {
+	probe := *cfg
+	probe.ID = 0
+	// Mot de passe jetable, jamais restitué : celui du futur dépôt n'existe
+	// pas encore. En faire porter un par la requête laisserait croire qu'il
+	// sera conservé, alors que le dépôt de sonde est détruit derrière.
+	pw, err := randomSecret(32)
+	if err != nil {
+		return nil, err
+	}
+	probe.ResticPassword = pw
+	if err := probe.Validate(); err != nil {
+		return nil, err
+	}
+
+	var source *domain.StorageConfig
+	if probe.IsCopyTarget() {
+		if source, err = s.copySource(ctx, probe.CopyOf); err != nil {
+			return nil, err
+		}
+	}
+
+	res, err := s.engine.TestTarget(ctx, &probe, source)
+	if err != nil {
+		return nil, err
+	}
+	// Le point de terminaison n'est PAS journalisé : celui du backend REST
+	// porte ses identifiants (https://user:mdp@hôte/...). Le type et l'étape
+	// fautive suffisent à exploiter la trace.
+	if res.OK() {
+		s.logger.Info("storage target probe passed", "name", probe.Name, "type", probe.Type)
+	} else {
+		s.logger.Warn("storage target probe failed", "name", probe.Name, "type", probe.Type,
+			"failed_step", res.FailedStep())
+	}
+	return res, nil
 }

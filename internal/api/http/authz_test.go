@@ -162,6 +162,10 @@ func TestStorageOperationsRequireAdmin(t *testing.T) {
 		{http.MethodPost, "/api/v1/storage/1/verify"},
 		{http.MethodPost, "/api/v1/storage/1/replicate"},
 		{http.MethodDelete, "/api/v1/storage/1"},
+		// la sonde porte des identifiants en clair dans sa requête et fait
+		// écrire un dépôt sur une cible arbitraire : aussi fermée que la
+		// création elle-même
+		{http.MethodPost, "/api/v1/storage/test"},
 	}
 	for _, tc := range cases {
 		if w := do(s, tc.method, tc.path, userTok, ""); w.Code != http.StatusForbidden {

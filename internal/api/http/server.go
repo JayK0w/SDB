@@ -133,6 +133,11 @@ func NewServer(opts Options, svc Services, hub *Hub, logger *slog.Logger) *Serve
 			admin.GET("/restores/clone-compose", s.handleCloneCompose)
 
 			admin.POST("/storage", s.handleCreateStorage)
+			// éprouve une cible avant de la créer : porte des identifiants
+			// en clair dans sa requête, comme la création. Aucune ambiguïté
+			// avec `/storage/:id/...` — ces routes-là ont un segment de plus,
+			// et un identifiant est numérique.
+			admin.POST("/storage/test", s.handleTestStorage)
 			admin.PUT("/storage/:id", s.handleUpdateStorage)
 			admin.DELETE("/storage/:id", s.handleDeleteStorage)
 			admin.POST("/storage/:id/check", s.handleCheckStorage)

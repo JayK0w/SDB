@@ -167,6 +167,34 @@ discovered at 3am:
 `GET /replication` measures the gap on demand (two `restic snapshots` per
 pair); `POST /storage/:id/replicate` forces a full pass.
 
+### Probing a target before trusting it
+
+`POST /storage/test` takes the same body as a creation and returns a verdict
+per capability, **without writing anything to the database**.
+
+It exists because creating a storage only proves half of what matters.
+Creation runs `restic init`, which exercises *listing* the backend and
+*writing* to it — so a credential that cannot **delete** sails through. It
+then breaks at the first lock removal or the first prune: days later, on the
+secondary copy, which is the repository that has to work when the primary is
+already gone. The probe exercises listing, writing, reading back and deleting,
+and names the one that failed.
+
+Two properties make it safe to run against a real configuration:
+
+- it works in a **dedicated sub-path** (`sdb-connectivity-probe-<random>`),
+  never at the endpoint you asked about. Pointing the probe at an endpoint that
+  already holds a repository must not be able to damage it, and the probe both
+  writes and prunes;
+- reading is verified by **listing back the snapshot it just wrote**. A backend
+  that accepts writes but does not return them is broken, and that is precisely
+  the failure `restic init` alone reports as success.
+
+restic cannot destroy a repository: `forget --prune` removes the packs, the
+indexes and the snapshot, but `config` and `keys/` remain — a couple of objects,
+a few hundred bytes. The response returns that path rather than staying silent
+about it.
+
 ### Runbook, RPO and RTO
 
 Operating procedures live in **[docs/RUNBOOK.md](docs/RUNBOOK.md)** (French):
@@ -281,6 +309,7 @@ over the WebSocket.
 | GET | `/containers` | user | List containers (`?all=true` includes stopped) |
 | GET | `/storage` | user | List storage targets (secrets redacted) |
 | POST/PUT/DELETE | `/storage[/:id]` | admin | Manage storage targets |
+| POST | `/storage/test` | admin | Probe a target **before creating it** — exercises list, write, read and **delete** → 200 with a per-step verdict |
 | GET | `/storage/:id/snapshots` | user | List Restic snapshots (`?tag=`) |
 | POST | `/storage/:id/check` | admin | Integrity check → 202 |
 | POST | `/storage/:id/verify` | admin | Verification restore — really extracts the newest snapshot into a throwaway volume → 202 |
